@@ -1,0 +1,5 @@
+terraform (1.0.6-1kaisen) kaisen-packages; urgency=medium
+
+  * First packaging for Kaisen Linux
+
+ -- Kevin Chevreuil - Kaisen <kaisen@kaisenlinux.org>  Tue, 07 Sep 2021 15:43:58 +0200
