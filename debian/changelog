@@ -1,3 +1,9 @@
+terraform (1.0.9-1kaisen) kaisen-packages; urgency=medium
+
+  * Import 1.0.9 version
+
+ -- Kevin Chevreuil - Kaisen <kaisen@kaisenlinux.org>  Sun, 17 Oct 2021 23:27:52 +0200
+
 terraform (1.0.8-1kaisen) kaisen-packages; urgency=medium
 
   * Import 1.0.8 version
