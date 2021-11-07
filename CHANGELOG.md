@@ -1,3 +1,12 @@
+## 1.0.10 (October 28, 2021)
+
+BUG FIXES:
+
+* backend/oss: Fix panic when there's an error looking up OSS endpoints ([#29784](https://github.com/hashicorp/terraform/issues/29784))
+* backend/remote: Fix version check when migrating state ([#29793](https://github.com/hashicorp/terraform/issues/29793))
+* cli: Restore `-lock` and `-lock-timeout` flags for the `init` command, which were removed in 0.15.0 ([#29773](https://github.com/hashicorp/terraform/issues/29773))
+* cli: Fix bug where `terraform init -input=false` would hang waiting for user input to choose a workspace ([#29805](https://github.com/hashicorp/terraform/issues/29805))
+
 ## 1.0.9 (October 13, 2021)
 
 BUG FIXES:
