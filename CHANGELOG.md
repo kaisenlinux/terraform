@@ -1,3 +1,14 @@
+## 1.0.11 (November 10, 2021)
+
+ENHANCEMENTS:
+
+* backend/oss: Added support for `sts_endpoint` ([#29841](https://github.com/hashicorp/terraform/issues/29841))
+
+BUG FIXES:
+
+* config: Fixed a bug in which `ignore_changes = all` would not work in override files ([#29849](https://github.com/hashicorp/terraform/issues/29849))
+* config: Numbers are now compared for equality based on their protocol representation, eliminating unexpected changes due to small precision errors ([#29864](https://github.com/hashicorp/terraform/issues/29864))
+
 ## 1.0.10 (October 28, 2021)
 
 BUG FIXES:
