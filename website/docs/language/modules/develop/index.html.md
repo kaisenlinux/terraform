@@ -2,8 +2,7 @@
 layout: "language"
 page_title: "Creating Modules"
 sidebar_current: "docs-modules"
-description: |-
-  A module is a container for multiple resources that are used together.
+description: "Modules are containers for multiple resources that are used together in a configuration. Learn when to create modules and about module structure."
 ---
 
 # Creating Modules
@@ -71,3 +70,10 @@ your module is not creating any new abstraction and so the module is
 adding unnecessary complexity. Just use the resource type directly in the
 calling module instead.
 
+## Refactoring module resources
+
+You can include [refactoring blocks](refactoring.html) to record how resource
+names and module structure have changed from previous module versions.
+Terraform uses that information during planning to reinterpret existing objects
+as if they had been created at the corresponding new addresses, eliminating a
+separate workflow step to replace or migrate existing objects.

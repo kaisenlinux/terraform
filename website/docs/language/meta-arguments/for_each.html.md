@@ -6,14 +6,6 @@ description: "The for_each meta-argument allows you to manage similar infrastruc
 
 # The `for_each` Meta-Argument
 
--> **Version note:** `for_each` was added in Terraform 0.12.6. Module support
-for `for_each` was added in Terraform 0.13, and previous versions can only use
-it with resources.
-
--> **Note:** A given resource or module block cannot use both `count` and `for_each`.
-
-> **Hands-on:** Try the [Manage Similar Resources With For Each](https://learn.hashicorp.com/tutorials/terraform/for-each?in=terraform/0-13&utm_source=WEBSITE&utm_medium=WEB_IO&utm_offer=ARTICLE_PAGE&utm_content=DOCS) tutorial on HashiCorp Learn.
-
 By default, a [resource block](/docs/language/resources/syntax.html) configures one real
 infrastructure object (and similarly, a
 [module block](/docs/language/modules/syntax.html) includes a
@@ -23,9 +15,17 @@ pool of compute instances) without writing a separate block for each one.
 Terraform has two ways to do this:
 [`count`](/docs/language/meta-arguments/count.html) and `for_each`.
 
+> **Hands-on:** Try the [Manage Similar Resources With For Each](https://learn.hashicorp.com/tutorials/terraform/for-each?in=terraform/configuration-language) tutorial on HashiCorp Learn.
+
 If a resource or module block includes a `for_each` argument whose value is a map or
 a set of strings, Terraform will create one instance for each member of
 that map or set.
+
+-> **Version note:** `for_each` was added in Terraform 0.12.6. Module support
+for `for_each` was added in Terraform 0.13; previous versions can only use
+it with resources.
+
+-> **Note:** A given resource or module block cannot use both `count` and `for_each`.
 
 ## Basic Syntax
 
@@ -110,10 +110,10 @@ main evaluation step.
 
 Sensitive values, such as [sensitive input variables](https://www.terraform.io/docs/language/values/variables.html#suppressing-values-in-cli-output),
 [sensitive outputs](https://www.terraform.io/docs/language/values/outputs.html#sensitive-suppressing-values-in-cli-output),
-or [sensitive resource attributes](https://www.terraform.io/docs/language/expressions/references.html#sensitive-resource-attributes)
-(if the `provider_sensitive_attrs` experiment is enabled), cannot be used as arguments
-to `for_each`. The value used in `for_each` is used to identify the resource instance
-and will always be disclosed in UI output, which is why sensitive values are not allowed.
+or [sensitive resource attributes](https://www.terraform.io/docs/language/expressions/references.html#sensitive-resource-attributes),
+cannot be used as arguments to `for_each`. The value used in `for_each` is used
+to identify the resource instance and will always be disclosed in UI output,
+which is why sensitive values are not allowed.
 Attempts to use sensitive values as `for_each` arguments will result in an error.
 
 If you transform a value containing sensitive data into an argument to be used in `for_each`, be aware that

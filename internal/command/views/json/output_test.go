@@ -6,6 +6,7 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/hashicorp/terraform/internal/addrs"
+	"github.com/hashicorp/terraform/internal/lang/marks"
 	"github.com/hashicorp/terraform/internal/plans"
 	"github.com/hashicorp/terraform/internal/states"
 	"github.com/zclconf/go-cty/cty"
@@ -19,7 +20,7 @@ func TestOutputsFromMap(t *testing.T) {
 		},
 		// Sensitive string output
 		"beep": {
-			Value:     cty.StringVal("horse-battery").Mark("sensitive"),
+			Value:     cty.StringVal("horse-battery").Mark(marks.Sensitive),
 			Sensitive: true,
 		},
 		// Sensitive object output which is marked at the leaf
@@ -27,7 +28,7 @@ func TestOutputsFromMap(t *testing.T) {
 			Value: cty.ObjectVal(map[string]cty.Value{
 				"a": cty.ObjectVal(map[string]cty.Value{
 					"b": cty.ObjectVal(map[string]cty.Value{
-						"c": cty.StringVal("oh, hi").Mark("sensitive"),
+						"c": cty.StringVal("oh, hi").Mark(marks.Sensitive),
 					}),
 				}),
 			}),
@@ -73,6 +74,9 @@ func TestOutputsFromMap(t *testing.T) {
 func TestOutputsFromChanges(t *testing.T) {
 	root := addrs.RootModuleInstance
 	num, err := plans.NewDynamicValue(cty.NumberIntVal(1234), cty.Number)
+	if err != nil {
+		t.Fatalf("unexpected error creating dynamic value: %v", err)
+	}
 	str, err := plans.NewDynamicValue(cty.StringVal("1234"), cty.String)
 	if err != nil {
 		t.Fatalf("unexpected error creating dynamic value: %v", err)

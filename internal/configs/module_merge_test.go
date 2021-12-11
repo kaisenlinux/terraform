@@ -24,6 +24,8 @@ func TestModuleOverrideVariable(t *testing.T) {
 			Description:    "b_override description",
 			DescriptionSet: true,
 			Default:        cty.StringVal("b_override"),
+			Nullable:       false,
+			NullableSet:    true,
 			Type:           cty.String,
 			ConstraintType: cty.String,
 			ParsingMode:    VariableParseLiteral,
@@ -46,6 +48,8 @@ func TestModuleOverrideVariable(t *testing.T) {
 			Description:    "base description",
 			DescriptionSet: true,
 			Default:        cty.StringVal("b_override partial"),
+			Nullable:       true,
+			NullableSet:    false,
 			Type:           cty.String,
 			ConstraintType: cty.String,
 			ParsingMode:    VariableParseLiteral,
@@ -83,8 +87,9 @@ func TestModuleOverrideModule(t *testing.T) {
 
 	got := mod.ModuleCalls["example"]
 	want := &ModuleCall{
-		Name:       "example",
-		SourceAddr: "./example2-a_override",
+		Name:          "example",
+		SourceAddr:    addrs.ModuleSourceLocal("./example2-a_override"),
+		SourceAddrRaw: "./example2-a_override",
 		SourceAddrRange: hcl.Range{
 			Filename: "testdata/valid-modules/override-module/a_override.tf",
 			Start: hcl.Pos{
@@ -290,7 +295,7 @@ func TestModuleOverrideResourceFQNs(t *testing.T) {
 	assertNoDiagnostics(t, diags)
 
 	got := mod.ManagedResources["test_instance.explicit"]
-	wantProvider := addrs.NewProvider(addrs.DefaultRegistryHost, "bar", "test")
+	wantProvider := addrs.NewProvider(addrs.DefaultProviderRegistryHost, "bar", "test")
 	wantProviderCfg := &ProviderConfigRef{
 		Name: "bar-test",
 		NameRange: hcl.Range{

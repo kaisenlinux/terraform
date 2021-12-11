@@ -136,6 +136,9 @@ func (n *NodeAbstractResourceInstance) Provider() addrs.Provider {
 	if n.Config != nil {
 		return n.Config.Provider
 	}
+	if n.storedProviderConfig.Provider.Type != "" {
+		return n.storedProviderConfig.Provider
+	}
 	return addrs.ImpliedProviderForUnqualifiedType(n.Addr.Resource.ContainingResource().ImpliedProvider())
 }
 
@@ -150,6 +153,7 @@ func (n *NodeAbstractResourceInstance) AttachResourceState(s *states.Resource) {
 		log.Printf("[WARN] attaching nil state to %s", n.Addr)
 		return
 	}
+	log.Printf("[TRACE] NodeAbstractResourceInstance.AttachResourceState for %s", n.Addr)
 	n.instanceState = s.Instance(n.Addr.Resource.Key)
 	n.storedProviderConfig = s.ProviderConfig
 }
@@ -392,8 +396,9 @@ func (n *NodeAbstractResourceInstance) planDestroy(ctx EvalContext, currentState
 		// that we checked something and concluded no changes were needed
 		// vs. that something being entirely excluded e.g. due to -target.
 		noop := &plans.ResourceInstanceChange{
-			Addr:       absAddr,
-			DeposedKey: deposedKey,
+			Addr:        absAddr,
+			PrevRunAddr: n.prevRunAddr(ctx),
+			DeposedKey:  deposedKey,
 			Change: plans.Change{
 				Action: plans.NoOp,
 				Before: cty.NullVal(cty.DynamicPseudoType),
@@ -419,8 +424,9 @@ func (n *NodeAbstractResourceInstance) planDestroy(ctx EvalContext, currentState
 	// Plan is always the same for a destroy. We don't need the provider's
 	// help for this one.
 	plan := &plans.ResourceInstanceChange{
-		Addr:       absAddr,
-		DeposedKey: deposedKey,
+		Addr:        absAddr,
+		PrevRunAddr: n.prevRunAddr(ctx),
+		DeposedKey:  deposedKey,
 		Change: plans.Change{
 			Action: plans.Delete,
 			Before: currentState.Value,
@@ -444,7 +450,7 @@ func (n *NodeAbstractResourceInstance) planDestroy(ctx EvalContext, currentState
 	return plan, diags
 }
 
-// writeChange  saves a planned change for an instance object into the set of
+// writeChange saves a planned change for an instance object into the set of
 // global planned changes.
 func (n *NodeAbstractResourceInstance) writeChange(ctx EvalContext, change *plans.ResourceInstanceChange, deposedKey states.DeposedKey) error {
 	changes := ctx.Changes()
@@ -468,6 +474,16 @@ func (n *NodeAbstractResourceInstance) writeChange(ctx EvalContext, change *plan
 	if change.Addr.String() != n.Addr.String() || change.DeposedKey != deposedKey {
 		// Should never happen, and indicates a bug in the caller.
 		panic("inconsistent address and/or deposed key in writeChange")
+	}
+	if change.PrevRunAddr.Resource.Resource.Type == "" {
+		// Should never happen, and indicates a bug in the caller.
+		// (The change.Encode function actually has its own fixup to just
+		// quietly make this match change.Addr in the incorrect case, but we
+		// intentionally panic here in order to catch incorrect callers where
+		// the stack trace will hopefully be actually useful. The tolerance
+		// at the next layer down is mainly to accommodate sloppy input in
+		// older tests.)
+		panic("unpopulated ResourceInstanceChange.PrevRunAddr in writeChange")
 	}
 
 	ri := n.Addr.Resource
@@ -1054,6 +1070,7 @@ func (n *NodeAbstractResourceInstance) plan(
 	// Update our return plan
 	plan = &plans.ResourceInstanceChange{
 		Addr:         n.Addr,
+		PrevRunAddr:  n.prevRunAddr(ctx),
 		Private:      plannedPrivate,
 		ProviderAddr: n.ResolvedProvider,
 		Change: plans.Change{
@@ -1275,14 +1292,19 @@ func processIgnoreChangesIndividual(prior, config cty.Value, ignoreChangesPath [
 		}
 
 		var newVal cty.Value
-		if len(configMap) == 0 {
-			newVal = cty.MapValEmpty(v.Type().ElementType())
-		} else {
+		switch {
+		case len(configMap) > 0:
 			newVal = cty.MapVal(configMap)
+		case v.IsNull():
+			// if the config value was null, and no values remain in the map,
+			// reset the value to null.
+			newVal = v
+		default:
+			newVal = cty.MapValEmpty(v.Type().ElementType())
 		}
 
 		if len(vMarks) > 0 {
-			newVal = v.WithMarks(vMarks)
+			newVal = newVal.WithMarks(vMarks)
 		}
 
 		return newVal, nil
@@ -1515,6 +1537,7 @@ func (n *NodeAbstractResourceInstance) planDataSource(ctx EvalContext, currentSt
 		// value containing unknowns from PlanDataResourceObject.
 		plannedChange := &plans.ResourceInstanceChange{
 			Addr:         n.Addr,
+			PrevRunAddr:  n.prevRunAddr(ctx),
 			ProviderAddr: n.ResolvedProvider,
 			Change: plans.Change{
 				Action: plans.Read,
@@ -1794,7 +1817,14 @@ func (n *NodeAbstractResourceInstance) applyProvisioners(ctx EvalContext, state 
 			return diags.Append(err)
 		}
 
-		schema := ctx.ProvisionerSchema(prov.Type)
+		schema, err := ctx.ProvisionerSchema(prov.Type)
+		if err != nil {
+			// This error probably won't be a great diagnostic, but in practice
+			// we typically catch this problem long before we get here, so
+			// it should be rare to return via this codepath.
+			diags = diags.Append(err)
+			return diags
+		}
 
 		config, configDiags := evalScope(ctx, prov.Config, self, schema)
 		diags = diags.Append(configDiags)
@@ -2252,4 +2282,13 @@ func (n *NodeAbstractResourceInstance) apply(
 		// Non error case, were the object was deleted
 		return nil, diags
 	}
+}
+
+func (n *NodeAbstractResourceInstance) prevRunAddr(ctx EvalContext) addrs.AbsResourceInstance {
+	return resourceInstancePrevRunAddr(ctx, n.Addr)
+}
+
+func resourceInstancePrevRunAddr(ctx EvalContext, currentAddr addrs.AbsResourceInstance) addrs.AbsResourceInstance {
+	table := ctx.MoveResults()
+	return table.OldAddr(currentAddr)
 }

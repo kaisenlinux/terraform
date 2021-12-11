@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/hashicorp/terraform/internal/lang/marks"
 	"github.com/zclconf/go-cty/cty"
 )
 
@@ -59,7 +60,7 @@ func TestObjectValueIDOrName(t *testing.T) {
 		},
 		{
 			cty.ObjectVal(map[string]cty.Value{
-				"name": cty.StringVal("awesome-foo").Mark("sensitive"),
+				"name": cty.StringVal("awesome-foo").Mark(marks.Sensitive),
 			}),
 			[...]string{"", ""},
 			[...]string{"", ""},
@@ -172,7 +173,7 @@ func TestObjectValueIDOrName(t *testing.T) {
 		{
 			cty.ObjectVal(map[string]cty.Value{
 				"tags": cty.MapVal(map[string]cty.Value{
-					"Name": cty.UnknownVal(cty.String).Mark("sensitive"),
+					"Name": cty.UnknownVal(cty.String).Mark(marks.Sensitive),
 				}),
 			}),
 			[...]string{"", ""},

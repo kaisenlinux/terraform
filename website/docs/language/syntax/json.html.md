@@ -2,8 +2,7 @@
 layout: "language"
 page_title: "JSON Configuration Syntax - Configuration Language"
 sidebar_current: "docs-config-syntax-json"
-description: |-
-  Details about the JSON-compatible Terraform language syntax, including file structure, expression mapping, and blocks.
+description: "Learn about the JSON-compatible language syntax, including file structure, expression mapping, block mapping, and block-type-specific exceptions."
 ---
 
 # JSON Configuration Syntax
@@ -30,7 +29,7 @@ of a specification called _HCL_. It is not necessary to know all of the details
 of HCL syntax or its JSON mapping in order to use Terraform, and so this page
 summarizes the most important differences between native and JSON syntax.
 If you are interested, you can find a full definition of HCL's JSON syntax
-in [its specification](https://github.com/hashicorp/hcl/blob/hcl2/json/spec.md).
+in [its specification](https://github.com/hashicorp/hcl/blob/main/json/spec.md).
 
 ## JSON File Structure
 

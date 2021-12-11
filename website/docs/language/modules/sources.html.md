@@ -14,6 +14,10 @@ Terraform uses this during the module installation step of `terraform init`
 to download the source code to a directory on local disk so that it can be
 used by other Terraform commands.
 
+> **Hands-on:** Try our HashiCorp Learn tutorials to use modules from [the
+> registry](https://learn.hashicorp.com/tutorials/terraform/module-use)
+>or [locally](https://learn.hashicorp.com/tutorials/terraform/module-create).
+
 The module installer supports installation from a number of different source
 types, as listed below.
 
@@ -32,6 +36,8 @@ types, as listed below.
   * [S3 buckets](#s3-bucket)
 
   * [GCS buckets](#gcs-bucket)
+
+  * [Modules in Package Sub-directories](#modules-in-package-sub-directories)
 
 Each of these is described in the following sections. Module source addresses
 use a _URL-like_ syntax, but with extensions to support unambiguous selection
@@ -71,6 +77,15 @@ Local paths are special in that they are not "installed" in the same sense
 that other sources are: the files are already present on local disk (possibly
 as a result of installing a parent module) and so can just be used directly.
 Their source code is automatically updated if the parent module is upgraded.
+
+Note that Terraform does not consider an _absolute_ filesystem path (starting
+with a slash, a drive letter, or similar) to be a local path. Instead,
+Terraform will treat that in a similar way as a remote module and copy it into
+the local module cache. An absolute path is a "package" in the sense described
+in [Modules in Package Sub-directories](#modules-in-package-sub-directories).
+We don't recommend using absolute filesystem paths to refer to Terraform
+modules, because it will tend to couple your configuration to the filesystem
+layout of a particular computer.
 
 ## Terraform Registry
 
@@ -222,16 +237,20 @@ only SSH key authentication is supported, and
 
 By default, Terraform will clone and use the default branch (referenced by
 `HEAD`) in the selected repository. You can override this using the
-`ref` argument:
+`ref` argument. The value of the `ref` argument can be any reference that would be accepted
+by the `git checkout` command, such as branch, SHA-1 hash (short or full), or tag names. The [Git documentation](https://git-scm.com/book/en/v2/Git-Tools-Revision-Selection#_single_revisions) contains a complete list.
 
 ```hcl
+# referencing a specific release
 module "vpc" {
   source = "git::https://example.com/vpc.git?ref=v1.2.0"
 }
-```
 
-The value of the `ref` argument can be any reference that would be accepted
-by the `git checkout` command, including branch and tag names.
+# referencing a specific commit SHA-1 hash
+module "storage" {
+  source = "git::https://example.com/storage.git?ref=51d462976d84fdea54b47d80dcabbf680badcdb8"
+}
+```
 
 ### "scp-like" address syntax
 
@@ -318,7 +337,7 @@ using one of the forms documented elsewhere on this page.
 
 If an HTTP/HTTPS URL requires authentication credentials, use a `.netrc`
 file in your home directory to configure these. For information on this format,
-see [the documentation for using it in `curl`](https://ec.haxx.se/usingcurl-netrc.html).
+see [the documentation for using it in `curl`](https://everything.curl.dev/usingcurl/netrc).
 
 ### Fetching archives over HTTP
 
@@ -358,7 +377,7 @@ information.
 
 You can use archives stored in S3 as module sources using the special `s3::`
 prefix, followed by
-[an S3 bucket object URL](http://docs.aws.amazon.com/AmazonS3/latest/dev/UsingBucket.html#access-bucket-intro).
+[an S3 bucket object URL](https://docs.aws.amazon.com/AmazonS3/latest/userguide/UsingBucket.html).
 
 ```hcl
 module "consul" {
@@ -405,7 +424,7 @@ module "consul" {
 The module installer uses Google Cloud SDK to authenticate with GCS. To set credentials you can:
 
 * Enter the path of your service account key file in the GOOGLE_APPLICATION_CREDENTIALS environment variable, or;
-* If you're running Terraform from a GCE instance, default credentials are automatically available. See [Creating and Enabling Service Accounts](https://cloud.google.com/compute/docs/authentication) for Instances for more details
+* If you're running Terraform from a GCE instance, default credentials are automatically available. See [Creating and Enabling Service Accounts](https://cloud.google.com/compute/docs/access/create-enable-service-accounts-for-instances) for Instances for more details
 * On your computer, you can make your Google identity available by running `gcloud auth application-default login`.
 
 

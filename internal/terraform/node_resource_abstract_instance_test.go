@@ -13,9 +13,10 @@ import (
 
 func TestNodeAbstractResourceInstanceProvider(t *testing.T) {
 	tests := []struct {
-		Addr   addrs.AbsResourceInstance
-		Config *configs.Resource
-		Want   addrs.Provider
+		Addr                 addrs.AbsResourceInstance
+		Config               *configs.Resource
+		StoredProviderConfig addrs.AbsProviderConfig
+		Want                 addrs.Provider
 	}{
 		{
 			Addr: addrs.Resource{
@@ -24,7 +25,7 @@ func TestNodeAbstractResourceInstanceProvider(t *testing.T) {
 				Name: "baz",
 			}.Instance(addrs.NoKey).Absolute(addrs.RootModuleInstance),
 			Want: addrs.Provider{
-				Hostname:  addrs.DefaultRegistryHost,
+				Hostname:  addrs.DefaultProviderRegistryHost,
 				Namespace: "hashicorp",
 				Type:      "null",
 			},
@@ -53,14 +54,14 @@ func TestNodeAbstractResourceInstanceProvider(t *testing.T) {
 				// Just enough configs.Resource for the Provider method. Not
 				// actually valid for general use.
 				Provider: addrs.Provider{
-					Hostname:  addrs.DefaultRegistryHost,
+					Hostname:  addrs.DefaultProviderRegistryHost,
 					Namespace: "awesomecorp",
 					Type:      "happycloud",
 				},
 			},
 			// The config overrides the default behavior.
 			Want: addrs.Provider{
-				Hostname:  addrs.DefaultRegistryHost,
+				Hostname:  addrs.DefaultProviderRegistryHost,
 				Namespace: "awesomecorp",
 				Type:      "happycloud",
 			},
@@ -75,16 +76,38 @@ func TestNodeAbstractResourceInstanceProvider(t *testing.T) {
 				// Just enough configs.Resource for the Provider method. Not
 				// actually valid for general use.
 				Provider: addrs.Provider{
-					Hostname:  addrs.DefaultRegistryHost,
+					Hostname:  addrs.DefaultProviderRegistryHost,
 					Namespace: "awesomecorp",
 					Type:      "happycloud",
 				},
 			},
 			// The config overrides the default behavior.
 			Want: addrs.Provider{
-				Hostname:  addrs.DefaultRegistryHost,
+				Hostname:  addrs.DefaultProviderRegistryHost,
 				Namespace: "awesomecorp",
 				Type:      "happycloud",
+			},
+		},
+		{
+			Addr: addrs.Resource{
+				Mode: addrs.DataResourceMode,
+				Type: "null_resource",
+				Name: "baz",
+			}.Instance(addrs.NoKey).Absolute(addrs.RootModuleInstance),
+			Config: nil,
+			StoredProviderConfig: addrs.AbsProviderConfig{
+				Module: addrs.RootModule,
+				Provider: addrs.Provider{
+					Hostname:  addrs.DefaultProviderRegistryHost,
+					Namespace: "awesomecorp",
+					Type:      "null",
+				},
+			},
+			// The stored provider config overrides the default behavior.
+			Want: addrs.Provider{
+				Hostname:  addrs.DefaultProviderRegistryHost,
+				Namespace: "awesomecorp",
+				Type:      "null",
 			},
 		},
 	}
@@ -104,6 +127,7 @@ func TestNodeAbstractResourceInstanceProvider(t *testing.T) {
 				NodeAbstractResource: NodeAbstractResource{
 					Config: test.Config,
 				},
+				storedProviderConfig: test.StoredProviderConfig,
 			}
 			got := node.Provider()
 			if got != test.Want {

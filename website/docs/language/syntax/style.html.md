@@ -2,8 +2,7 @@
 layout: "language"
 page_title: "Style Conventions - Configuration Language"
 sidebar_current: "docs-config-style"
-description: |-
-  Recommended formatting conventions for the Terraform language.
+description: "Learn recommended formatting conventions for the Terraform language and a command to automatically enforce them."
 ---
 
 # Style Conventions
@@ -14,6 +13,8 @@ idiomatic style conventions which we recommend users always follow
 for consistency between files and modules written by different teams.
 Automatic source code formatting tools may apply these conventions
 automatically.
+
+-> **Note**: You can enforce these conventions automatically by running [`terraform fmt`](/docs/cli/commands/fmt.html).
 
 * Indent two spaces for each nesting level.
 

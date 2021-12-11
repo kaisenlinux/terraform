@@ -9,6 +9,7 @@ import (
 	ctyjson "github.com/zclconf/go-cty/cty/json"
 
 	"github.com/hashicorp/terraform/internal/addrs"
+	"github.com/hashicorp/terraform/internal/lang/marks"
 	"github.com/hashicorp/terraform/internal/states"
 	"github.com/hashicorp/terraform/internal/states/statefile"
 	"github.com/hashicorp/terraform/internal/terraform"
@@ -17,7 +18,7 @@ import (
 // FormatVersion represents the version of the json format and will be
 // incremented for any change to this format that requires changes to a
 // consuming parser.
-const FormatVersion = "0.2"
+const FormatVersion = "1.0"
 
 // state is the top-level representation of the json format of a terraform
 // state.
@@ -400,7 +401,7 @@ func marshalResources(resources map[string]*states.Resource, module addrs.Module
 }
 
 func SensitiveAsBool(val cty.Value) cty.Value {
-	if val.HasMark("sensitive") {
+	if val.HasMark(marks.Sensitive) {
 		return cty.True
 	}
 

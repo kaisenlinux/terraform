@@ -2,18 +2,16 @@
 layout: "language"
 page_title: "Input Variables - Configuration Language"
 sidebar_current: "docs-config-variables"
-description: |-
-  Input variables are parameters for Terraform modules.
-  This page covers configuration syntax for variables.
+description: "Input variables allow you to customize modules without altering their source code. Learn how to declare, define, and reference variables in configurations."
 ---
 
 # Input Variables
 
 > **Hands-on:** Try the [Customize Terraform Configuration with Variables](https://learn.hashicorp.com/tutorials/terraform/variables?in=terraform/configuration-language&utm_source=WEBSITE&utm_medium=WEB_IO&utm_offer=ARTICLE_PAGE&utm_content=DOCS) tutorial on HashiCorp Learn.
 
-Input variables serve as parameters for a Terraform module, allowing aspects
-of the module to be customized without altering the module's own source code,
-and allowing modules to be shared between different configurations.
+Input variables let you customize aspects of Terraform modules without altering
+the module's own source code. This allows you to share modules across different
+Terraform configurations, making your module composable and reusable.
 
 When you declare variables in the root module of your configuration, you can
 set their values using CLI options and environment variables.
@@ -86,6 +84,7 @@ Terraform CLI defines the following optional arguments for variable declarations
 - [`description`][inpage-description] - This specifies the input variable's documentation.
 - [`validation`][inpage-validation] - A block to define validation rules, usually in addition to type constraints.
 - [`sensitive`][inpage-sensitive] - Limits Terraform UI output when the variable is used in configuration.
+- [`nullable`][inpage-nullable] - Specify if the variable can be `null` within the module.
 
 ### Default values
 
@@ -203,6 +202,9 @@ that includes the sentences given in `error_message`. The error message string
 should be at least one full sentence explaining the constraint that failed,
 using a sentence structure similar to the above examples.
 
+Multiple `validation` blocks can be declared in which case error messages
+will be returned for _all_ failed conditions.
+
 ### Suppressing Values in CLI Output
 
 [inpage-sensitive]: #suppressing-values-in-cli-output
@@ -301,6 +303,37 @@ Plan: 1 to add, 0 to change, 0 to destroy.
 random_pet.animal: Creating...
 random_pet.animal: Creation complete after 0s [id=jae-known-mongoose]
 ```
+
+### Disallowing null Module Input Values
+
+[inpage-nullable]: #disallowing-null-input-values
+
+-> This feature is available in Terraform v1.1.0 and later.
+
+The `nullable` argument in a variable block controls whether the module caller
+may assign the value `null` to the variable.
+
+```
+variable "example" {
+  type     = string
+  nullable = false 
+}
+```
+
+The default value for `nullable` is `true`. When `nullable` is `true`, `null`
+is a valid value for the variable, and the module configuration must always
+account for the possibility of the variable value being `null`. Passing a
+`null` value as a module input argument will override any `default` value.
+
+Setting `nullable` to `false` ensures that the variable value will never be
+`null` within the module. If `nullable` is `false` and the variable has a
+`default` value, then Terraform uses the default when a module input argument is `null`.
+
+The `nullable` argument only controls where the direct value of the variable may be `null`.
+For variables of collection or structural types, such as lists or objects,
+the caller may still use `null` in nested elements or attributes, as long as
+the collection or structure itself is not null.
+
 
 ## Using Input Variable Values
 

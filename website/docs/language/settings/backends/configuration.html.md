@@ -5,11 +5,14 @@ page_title: "Backend Configuration - Configuration Language"
 
 # Backend Configuration
 
+Each Terraform configuration can specify a backend, which defines where
+[state](/docs/language/state/index.html) snapshots are stored.
 
-Each Terraform configuration can specify a backend, which defines exactly where
-and how operations are performed, where [state](/docs/language/state/index.html)
-snapshots are stored, etc. Most non-trivial Terraform configurations configure
-a remote backend so that multiple people can work with the same infrastructure.
+You do not need to configure a backend when using Terraform Cloud because
+Terraform Cloud automatically manages state in the workspaces associated with your configuration. If your configuration includes [a `cloud` block](/docs/language/settings/terraform-cloud.html), it cannot include a `backend` block.
+
+Most non-trivial Terraform configurations store state remotely so that multiple
+people can work with the same infrastructure.
 
 ## Using a Backend Block
 
@@ -45,7 +48,7 @@ See the list of backend types in the navigation sidebar for details about each s
 
 ### Default Backend
 
-If a configuration includes no backend block, Terraform defaults to using the `local` backend, which performs operations on the local system and stores state as a plain file in the current working directory.
+If a configuration includes no backend block, Terraform defaults to using the `local` backend, which stores state as a plain file in the current working directory.
 
 ## Initialization
 
@@ -70,16 +73,15 @@ automatically by an automation script running Terraform. When some or all of
 the arguments are omitted, we call this a _partial configuration_.
 
 With a partial configuration, the remaining configuration arguments must be
-provided as part of
-[the initialization process](/docs/cli/init/index.html).
+provided as part of [the initialization process](/docs/cli/init/index.html).
+
 There are several ways to supply the remaining arguments:
 
   * **File**: A configuration file may be specified via the `init` command line.
     To specify a file, use the `-backend-config=PATH` option when running
     `terraform init`. If the file contains secrets it may be kept in
-    a secure data store, such as
-    [Vault](https://www.vaultproject.io/), in which case it must be downloaded
-    to the local disk before running Terraform.
+    a secure data store, such as [Vault](https://www.vaultproject.io/),
+    in which case it must be downloaded to the local disk before running Terraform.
 
   * **Command-line key/value pairs**: Key/value pairs can be specified via the
     `init` command line. Note that many shells retain command-line flags in a
@@ -111,6 +113,8 @@ terraform {
 }
 ```
 
+### File
+
 A backend configuration file has the contents of the `backend` block as
 top-level attributes, without the need to wrap it in another `terraform`
 or `backend` block:
@@ -120,6 +124,13 @@ address = "demo.consul.io"
 path    = "example_app/terraform_state"
 scheme  = "https"
 ```
+
+`*.backendname.tfbackend` (e.g. `config.consul.tfbackend`) is the recommended
+naming pattern. Terraform will not prevent you from using other names but following
+this convention will help your editor understand the content and likely provide
+better editing experience as a result.
+
+### Command-line key/value pairs
 
 The same settings can alternatively be specified on the command line as
 follows:

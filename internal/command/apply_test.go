@@ -28,6 +28,7 @@ import (
 	"github.com/hashicorp/terraform/internal/states"
 	"github.com/hashicorp/terraform/internal/states/statemgr"
 	"github.com/hashicorp/terraform/internal/terraform"
+	"github.com/hashicorp/terraform/internal/tfdiags"
 	tfversion "github.com/hashicorp/terraform/version"
 )
 
@@ -709,7 +710,6 @@ func TestApply_plan(t *testing.T) {
 }
 
 func TestApply_plan_backup(t *testing.T) {
-	planPath := applyFixturePlanFile(t)
 	statePath := testTempFile(t)
 	backupPath := testTempFile(t)
 
@@ -723,10 +723,16 @@ func TestApply_plan_backup(t *testing.T) {
 	}
 
 	// create a state file that needs to be backed up
-	err := statemgr.NewFilesystem(statePath).WriteState(states.NewState())
+	fs := statemgr.NewFilesystem(statePath)
+	fs.StateSnapshotMeta()
+	err := fs.WriteState(states.NewState())
 	if err != nil {
 		t.Fatal(err)
 	}
+
+	// the plan file must contain the metadata from the prior state to be
+	// backed up
+	planPath := applyFixturePlanFileMatchState(t, fs.StateSnapshotMeta())
 
 	args := []string{
 		"-state", statePath,
@@ -1023,6 +1029,56 @@ func TestApply_refresh(t *testing.T) {
 	}
 }
 
+func TestApply_refreshFalse(t *testing.T) {
+	// Create a temporary working directory that is empty
+	td := tempDir(t)
+	testCopyDir(t, testFixturePath("apply"), td)
+	defer os.RemoveAll(td)
+	defer testChdir(t, td)()
+
+	originalState := states.BuildState(func(s *states.SyncState) {
+		s.SetResourceInstanceCurrent(
+			addrs.Resource{
+				Mode: addrs.ManagedResourceMode,
+				Type: "test_instance",
+				Name: "foo",
+			}.Instance(addrs.NoKey).Absolute(addrs.RootModuleInstance),
+			&states.ResourceInstanceObjectSrc{
+				AttrsJSON: []byte(`{"ami":"bar"}`),
+				Status:    states.ObjectReady,
+			},
+			addrs.AbsProviderConfig{
+				Provider: addrs.NewDefaultProvider("test"),
+				Module:   addrs.RootModule,
+			},
+		)
+	})
+	statePath := testStateFile(t, originalState)
+
+	p := applyFixtureProvider()
+	view, done := testView(t)
+	c := &ApplyCommand{
+		Meta: Meta{
+			testingOverrides: metaOverridesForProvider(p),
+			View:             view,
+		},
+	}
+
+	args := []string{
+		"-state", statePath,
+		"-auto-approve",
+		"-refresh=false",
+	}
+	code := c.Run(args)
+	output := done(t)
+	if code != 0 {
+		t.Fatalf("bad: %d\n\n%s", code, output.Stderr())
+	}
+
+	if p.ReadResourceCalled {
+		t.Fatal("should not call ReadResource when refresh=false")
+	}
+}
 func TestApply_shutdown(t *testing.T) {
 	// Create a temporary working directory that is empty
 	td := tempDir(t)
@@ -1728,6 +1784,7 @@ func TestApply_terraformEnvNonDefault(t *testing.T) {
 			},
 		}
 		if code := newCmd.Run([]string{"test"}); code != 0 {
+			t.Fatal("error creating workspace")
 		}
 	}
 
@@ -1741,6 +1798,7 @@ func TestApply_terraformEnvNonDefault(t *testing.T) {
 			},
 		}
 		if code := selCmd.Run(args); code != 0 {
+			t.Fatal("error switching workspace")
 		}
 	}
 
@@ -2106,6 +2164,84 @@ func TestApply_jsonGoldenReference(t *testing.T) {
 	}
 }
 
+func TestApply_warnings(t *testing.T) {
+	// Create a temporary working directory that is empty
+	td := tempDir(t)
+	testCopyDir(t, testFixturePath("apply"), td)
+	defer os.RemoveAll(td)
+	defer testChdir(t, td)()
+
+	p := testProvider()
+	p.GetProviderSchemaResponse = applyFixtureSchema()
+	p.PlanResourceChangeFn = func(req providers.PlanResourceChangeRequest) providers.PlanResourceChangeResponse {
+		return providers.PlanResourceChangeResponse{
+			PlannedState: req.ProposedNewState,
+			Diagnostics: tfdiags.Diagnostics{
+				tfdiags.SimpleWarning("warning 1"),
+				tfdiags.SimpleWarning("warning 2"),
+			},
+		}
+	}
+	p.ApplyResourceChangeFn = func(req providers.ApplyResourceChangeRequest) providers.ApplyResourceChangeResponse {
+		return providers.ApplyResourceChangeResponse{
+			NewState: cty.UnknownAsNull(req.PlannedState),
+		}
+	}
+
+	t.Run("full warnings", func(t *testing.T) {
+		view, done := testView(t)
+		c := &ApplyCommand{
+			Meta: Meta{
+				testingOverrides: metaOverridesForProvider(p),
+				View:             view,
+			},
+		}
+
+		args := []string{"-auto-approve"}
+		code := c.Run(args)
+		output := done(t)
+		if code != 0 {
+			t.Fatalf("bad: %d\n\n%s", code, output.Stderr())
+		}
+		wantWarnings := []string{
+			"warning 1",
+			"warning 2",
+		}
+		for _, want := range wantWarnings {
+			if !strings.Contains(output.Stdout(), want) {
+				t.Errorf("missing warning %s", want)
+			}
+		}
+	})
+
+	t.Run("compact warnings", func(t *testing.T) {
+		view, done := testView(t)
+		c := &ApplyCommand{
+			Meta: Meta{
+				testingOverrides: metaOverridesForProvider(p),
+				View:             view,
+			},
+		}
+
+		code := c.Run([]string{"-auto-approve", "-compact-warnings"})
+		output := done(t)
+		if code != 0 {
+			t.Fatalf("bad: %d\n\n%s", code, output.Stderr())
+		}
+		// the output should contain 2 warnings and a message about -compact-warnings
+		wantWarnings := []string{
+			"warning 1",
+			"warning 2",
+			"To see the full warning notes, run Terraform without -compact-warnings.",
+		}
+		for _, want := range wantWarnings {
+			if !strings.Contains(output.Stdout(), want) {
+				t.Errorf("missing warning %s", want)
+			}
+		}
+	})
+}
+
 // applyFixtureSchema returns a schema suitable for processing the
 // configuration in testdata/apply . This schema should be
 // assigned to a mock provider named "test".
@@ -2149,6 +2285,13 @@ func applyFixtureProvider() *terraform.MockProvider {
 // a single change to create the test_instance.foo that is included in the
 // "apply" test fixture, returning the location of that plan file.
 func applyFixturePlanFile(t *testing.T) string {
+	return applyFixturePlanFileMatchState(t, statemgr.SnapshotMeta{})
+}
+
+// applyFixturePlanFileMatchState creates a planfile like applyFixturePlanFile,
+// but inserts the state meta information if that plan must match a preexisting
+// state.
+func applyFixturePlanFileMatchState(t *testing.T, stateMeta statemgr.SnapshotMeta) string {
 	_, snap := testModuleWithSnapshot(t, "apply")
 	plannedVal := cty.ObjectVal(map[string]cty.Value{
 		"id":  cty.UnknownVal(cty.String),
@@ -2179,11 +2322,12 @@ func applyFixturePlanFile(t *testing.T) string {
 			After:  plannedValRaw,
 		},
 	})
-	return testPlanFile(
+	return testPlanFileMatchState(
 		t,
 		snap,
 		states.NewState(),
 		plan,
+		stateMeta,
 	)
 }
 

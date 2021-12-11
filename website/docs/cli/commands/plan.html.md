@@ -7,17 +7,18 @@ description: "The terraform plan command creates an execution plan with a previe
 
 # Command: plan
 
-> **Hands-on:** Try the [Terraform: Get Started](https://learn.hashicorp.com/collections/terraform/aws-get-started?utm_source=WEBSITE&utm_medium=WEB_IO&utm_offer=ARTICLE_PAGE&utm_content=DOCS) collection on HashiCorp Learn.
+The `terraform plan` command creates an execution plan, which lets you preview
+the changes that Terraform plans to make to your infrastructure. By default,
+when Terraform creates a plan it:
 
-The `terraform plan` command creates an execution plan. By default, creating
-a plan consists of:
-
-* Reading the current state of any already-existing remote objects to make sure
+* Reads the current state of any already-existing remote objects to make sure
   that the Terraform state is up-to-date.
-* Comparing the current configuration to the prior state and noting any
+* Compares the current configuration to the prior state and noting any
   differences.
-* Proposing a set of change actions that should, if applied, make the remote
+* Proposes a set of change actions that should, if applied, make the remote
   objects match the configuration.
+
+> **Hands-on:** Try the [Terraform: Get Started](https://learn.hashicorp.com/collections/terraform/aws-get-started?utm_source=WEBSITE&utm_medium=WEB_IO&utm_offer=ARTICLE_PAGE&utm_content=DOCS) collection on HashiCorp Learn.
 
 The plan command alone will not actually carry out the proposed changes, and
 so you can use this command to check whether the proposed changes match what
@@ -40,7 +41,7 @@ is primarily intended for when
 [running Terraform in automation](https://learn.hashicorp.com/tutorials/terraform/automate-terraform?in=terraform/automation&utm_source=WEBSITE&utm_medium=WEB_IO&utm_offer=ARTICLE_PAGE&utm_content=DOCS).
 
 If you run `terraform plan` without the `-out=FILE` option then it will create
-a _speculative plan_, which is a description of a the effect of the plan but
+a _speculative plan_, which is a description of the effect of the plan but
 without any intent to actually apply it.
 
 In teams that use a version control and code review workflow for making changes
@@ -121,6 +122,8 @@ earlier versions you must run [`terraform destroy`](./destroy.html).
 
 -> **Note:** The `-refresh-only` option is available only in Terraform v0.15.4
 and later.
+
+> **Hands-on:** Try the [Use Refresh-Only Mode to Sync Terraform State](https://learn.hashicorp.com/tutorials/terraform/refresh) tutorial on HashiCorp Learn.
 
 ## Planning Options
 
@@ -329,7 +332,7 @@ The available options are:
 
 * `-input=false` - Disables Terraform's default behavior of prompting for
   input for root module input variables that have not otherwise been assigned
-  a value. This option is particular useful when running Terraform in
+  a value. This option is particularly useful when running Terraform in
   non-interactive automation systems.
 
 * `-json` - Enables the [machine readable JSON UI][machine-readable-ui] output.
@@ -370,7 +373,7 @@ The available options are:
     be saved in cleartext in the plan file. You should therefore treat any
     saved plan files as potentially-sensitive artifacts.
 
-* `-parallelism=n` - Limit the number of concurrent operation as Terraform
+* `-parallelism=n` - Limit the number of concurrent operations as Terraform
   [walks the graph](/docs/internals/graph.html#walking-the-graph). Defaults
   to 10.
 
@@ -389,7 +392,7 @@ That usage was deprecated in Terraform v0.14 and removed in Terraform v0.15.
 If your workflow relies on overriding the root module directory, use
 [the `-chdir` global option](./#switching-working-directory-with-chdir)
 instead, which works across all commands and makes Terraform consistently look
-in the given directory for all files it would normaly read or write in the
+in the given directory for all files it would normally read or write in the
 current working directory.
 
 If your previous use of this legacy pattern was also relying on Terraform

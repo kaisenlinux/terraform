@@ -9,6 +9,7 @@ import (
 
 	"github.com/hashicorp/terraform/internal/addrs"
 	"github.com/hashicorp/terraform/internal/configs/configschema"
+	"github.com/hashicorp/terraform/internal/lang/marks"
 	"github.com/hashicorp/terraform/internal/plans"
 	"github.com/hashicorp/terraform/internal/providers"
 	"github.com/hashicorp/terraform/internal/states"
@@ -46,21 +47,20 @@ func TestContext2Apply_createBeforeDestroy_deposedKeyPreApply(t *testing.T) {
 
 	hook := new(MockHook)
 	ctx := testContext2(t, &ContextOpts{
-		Config: m,
-		Hooks:  []Hook{hook},
+		Hooks: []Hook{hook},
 		Providers: map[addrs.Provider]providers.Factory{
 			addrs.NewDefaultProvider("aws"): testProviderFuncFixed(p),
 		},
-		State: state,
 	})
 
-	if p, diags := ctx.Plan(); diags.HasErrors() {
+	plan, diags := ctx.Plan(m, state, DefaultPlanOpts)
+	if diags.HasErrors() {
 		t.Fatalf("diags: %s", diags.Err())
 	} else {
-		t.Logf(legacyDiffComparisonString(p.Changes))
+		t.Logf(legacyDiffComparisonString(plan.Changes))
 	}
 
-	state, diags := ctx.Apply()
+	_, diags = ctx.Apply(plan, m)
 	if diags.HasErrors() {
 		t.Fatalf("diags: %s", diags.Err())
 	}
@@ -144,28 +144,27 @@ output "data" {
 	}
 
 	ctx := testContext2(t, &ContextOpts{
-		Config:    m,
 		Providers: ps,
 	})
 
-	_, diags := ctx.Plan()
+	plan, diags := ctx.Plan(m, states.NewState(), DefaultPlanOpts)
 	if diags.HasErrors() {
 		t.Fatal(diags.Err())
 	}
 
-	_, diags = ctx.Apply()
+	_, diags = ctx.Apply(plan, m)
 	if diags.HasErrors() {
 		t.Fatal(diags.Err())
 	}
 
 	// now destroy the whole thing
 	ctx = testContext2(t, &ContextOpts{
-		Config:    m,
 		Providers: ps,
-		PlanMode:  plans.DestroyMode,
 	})
 
-	_, diags = ctx.Plan()
+	plan, diags = ctx.Plan(m, states.NewState(), &PlanOpts{
+		Mode: plans.DestroyMode,
+	})
 	if diags.HasErrors() {
 		t.Fatal(diags.Err())
 	}
@@ -176,7 +175,7 @@ output "data" {
 		return resp
 	}
 
-	_, diags = ctx.Apply()
+	_, diags = ctx.Apply(plan, m)
 	if diags.HasErrors() {
 		t.Fatal(diags.Err())
 	}
@@ -230,18 +229,15 @@ resource "test_instance" "a" {
 	})
 
 	ctx := testContext2(t, &ContextOpts{
-		Config: m,
-		State:  state,
 		Providers: map[addrs.Provider]providers.Factory{
 			addrs.NewDefaultProvider("test"): testProviderFuncFixed(p),
 		},
 	})
 
-	if _, diags := ctx.Plan(); diags.HasErrors() {
-		t.Fatal(diags.Err())
-	}
+	plan, diags := ctx.Plan(m, state, DefaultPlanOpts)
+	assertNoErrors(t, diags)
 
-	_, diags := ctx.Apply()
+	_, diags = ctx.Apply(plan, m)
 	if diags.HasErrors() {
 		t.Fatal(diags.Err())
 	}
@@ -321,17 +317,13 @@ resource "aws_instance" "bin" {
 	p := testProvider("aws")
 
 	ctx := testContext2(t, &ContextOpts{
-		Config: m,
 		Providers: map[addrs.Provider]providers.Factory{
 			addrs.NewDefaultProvider("aws"): testProviderFuncFixed(p),
 		},
-		State: state,
 	})
 
-	plan, diags := ctx.Plan()
-	if diags.HasErrors() {
-		t.Fatal(diags.Err())
-	}
+	plan, diags := ctx.Plan(m, state, DefaultPlanOpts)
+	assertNoErrors(t, diags)
 
 	bar := plan.PriorState.ResourceInstance(barAddr)
 	if len(bar.Current.Dependencies) == 0 || !bar.Current.Dependencies[0].Equal(fooAddr.ContainingResource().Config()) {
@@ -353,7 +345,7 @@ resource "aws_instance" "bin" {
 		t.Fatalf("baz should depend on bam after refresh, but got %s", baz.Current.Dependencies)
 	}
 
-	state, diags = ctx.Apply()
+	state, diags = ctx.Apply(plan, m)
 	if diags.HasErrors() {
 		t.Fatal(diags.Err())
 	}
@@ -420,7 +412,7 @@ resource "test_resource" "b" {
 				AttrSensitivePaths: []cty.PathValueMarks{
 					{
 						Path:  cty.GetAttrPath("sensitive_attr"),
-						Marks: cty.NewValueMarks("sensitive"),
+						Marks: cty.NewValueMarks(marks.Sensitive),
 					},
 				},
 				Status: states.ObjectReady,
@@ -429,19 +421,15 @@ resource "test_resource" "b" {
 	})
 
 	ctx := testContext2(t, &ContextOpts{
-		Config: m,
 		Providers: map[addrs.Provider]providers.Factory{
 			addrs.NewDefaultProvider("test"): testProviderFuncFixed(p),
 		},
-		State: state,
 	})
 
-	_, diags := ctx.Plan()
-	if diags.HasErrors() {
-		t.Fatal(diags.ErrWithWarnings())
-	}
+	plan, diags := ctx.Plan(m, state, DefaultPlanOpts)
+	assertNoErrors(t, diags)
 
-	_, diags = ctx.Apply()
+	_, diags = ctx.Apply(plan, m)
 	if diags.HasErrors() {
 		t.Fatal(diags.ErrWithWarnings())
 	}
@@ -474,18 +462,15 @@ output "out" {
 	p := simpleMockProvider()
 
 	ctx := testContext2(t, &ContextOpts{
-		Config: m,
 		Providers: map[addrs.Provider]providers.Factory{
 			addrs.NewDefaultProvider("test"): testProviderFuncFixed(p),
 		},
 	})
 
-	_, diags := ctx.Plan()
-	if diags.HasErrors() {
-		t.Fatal(diags.ErrWithWarnings())
-	}
+	plan, diags := ctx.Plan(m, states.NewState(), DefaultPlanOpts)
+	assertNoErrors(t, diags)
 
-	state, diags := ctx.Apply()
+	state, diags := ctx.Apply(plan, m)
 	if diags.HasErrors() {
 		t.Fatal(diags.ErrWithWarnings())
 	}
@@ -495,10 +480,8 @@ output "out" {
 		t.Fatalf("Expected 1 sensitive mark for test_object.a, got %#v\n", obj.Current.AttrSensitivePaths)
 	}
 
-	plan, diags := ctx.Plan()
-	if diags.HasErrors() {
-		t.Fatal(diags.ErrWithWarnings())
-	}
+	plan, diags = ctx.Plan(m, state, DefaultPlanOpts)
+	assertNoErrors(t, diags)
 
 	// make sure the same marks are compared in the next plan as well
 	for _, c := range plan.Changes.Resources {
@@ -542,27 +525,20 @@ resource "test_object" "y" {
 	p := simpleMockProvider()
 
 	ctx := testContext2(t, &ContextOpts{
-		Config: m,
 		Providers: map[addrs.Provider]providers.Factory{
 			addrs.NewDefaultProvider("test"): testProviderFuncFixed(p),
 		},
 	})
 
-	_, diags := ctx.Plan()
-	if diags.HasErrors() {
-		t.Fatal(diags.ErrWithWarnings())
-	}
+	plan, diags := ctx.Plan(m, states.NewState(), DefaultPlanOpts)
+	assertNoErrors(t, diags)
 
-	_, diags = ctx.Apply()
-	if diags.HasErrors() {
-		t.Fatal(diags.ErrWithWarnings())
-	}
+	state, diags := ctx.Apply(plan, m)
+	assertNoErrors(t, diags)
 
 	// FINAL PLAN:
-	plan, diags := ctx.Plan()
-	if diags.HasErrors() {
-		t.Fatal(diags.ErrWithWarnings())
-	}
+	plan, diags = ctx.Plan(m, state, DefaultPlanOpts)
+	assertNoErrors(t, diags)
 
 	// make sure the same marks are compared in the next plan as well
 	for _, c := range plan.Changes.Resources {
@@ -605,19 +581,51 @@ resource "test_object" "x" {
 		Providers: map[addrs.Provider]providers.Factory{
 			addrs.NewDefaultProvider("test"): testProviderFuncFixed(p),
 		},
-		State:    state,
-		Config:   m,
-		PlanMode: plans.DestroyMode,
 	})
 
-	_, diags := ctx.Plan()
+	plan, diags := ctx.Plan(m, state, &PlanOpts{
+		Mode: plans.DestroyMode,
+	})
 	if diags.HasErrors() {
 		t.Fatalf("plan: %s", diags.Err())
 	}
 
-	// backported from v1.1, but the apply will error in in v1.0
-	//_, diags = ctx.Apply(plan, m)
-	//if diags.HasErrors() {
-	//    t.Fatalf("apply: %s", diags.Err())
-	//}
+	_, diags = ctx.Apply(plan, m)
+	if diags.HasErrors() {
+		t.Fatalf("apply: %s", diags.Err())
+	}
+
+}
+
+func TestContext2Apply_nullableVariables(t *testing.T) {
+	m := testModule(t, "apply-nullable-variables")
+	state := states.NewState()
+	ctx := testContext2(t, &ContextOpts{})
+	plan, diags := ctx.Plan(m, state, &PlanOpts{})
+	if diags.HasErrors() {
+		t.Fatalf("plan: %s", diags.Err())
+	}
+	state, diags = ctx.Apply(plan, m)
+	if diags.HasErrors() {
+		t.Fatalf("apply: %s", diags.Err())
+	}
+
+	outputs := state.Module(addrs.RootModuleInstance).OutputValues
+	// we check for null outputs be seeing that they don't exists
+	if _, ok := outputs["nullable_null_default"]; ok {
+		t.Error("nullable_null_default: expected no output value")
+	}
+	if _, ok := outputs["nullable_non_null_default"]; ok {
+		t.Error("nullable_non_null_default: expected no output value")
+	}
+	if _, ok := outputs["nullable_no_default"]; ok {
+		t.Error("nullable_no_default: expected no output value")
+	}
+
+	if v := outputs["non_nullable_default"].Value; v.AsString() != "ok" {
+		t.Fatalf("incorrect 'non_nullable_default' output value: %#v\n", v)
+	}
+	if v := outputs["non_nullable_no_default"].Value; v.AsString() != "ok" {
+		t.Fatalf("incorrect 'non_nullable_no_default' output value: %#v\n", v)
+	}
 }

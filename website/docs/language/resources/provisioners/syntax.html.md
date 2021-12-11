@@ -2,8 +2,7 @@
 layout: "language"
 page_title: "Provisioners"
 sidebar_current: "docs-provisioners"
-description: |-
-  Using provisioners in Terraform to execute scripts on a local or remote machine as part of resource creation or destruction.
+description: "Provisioners run scripts on a local or remote machine during resource creation or destruction. Learn how to declare provisioners in a configuration."
 ---
 
 # Provisioners
@@ -236,6 +235,9 @@ Destroy provisioners are run before the resource is destroyed. If they
 fail, Terraform will error and rerun the provisioners again on the next
 `terraform apply`. Due to this behavior, care should be taken for destroy
 provisioners to be safe to run multiple times.
+
+    Destroy provisioners of this resource will not run if `create_before_destroy`
+    is set to `true`. We may address this in the future, and this [GitHub issue](https://github.com/hashicorp/terraform/issues/13549) contains more details.
 
 Destroy-time provisioners can only run if they remain in the configuration
 at the time a resource is destroyed. If a resource block with a destroy-time

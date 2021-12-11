@@ -6,6 +6,8 @@ description: "The meta-arguments in a lifecycle block allow you to customize res
 
 # The `lifecycle` Meta-Argument
 
+> **Hands-on:** Try the [Lifecycle Management](https://learn.hashicorp.com/tutorials/terraform/resource-lifecycle?utm_source=WEBSITE&utm_medium=WEB_IO&utm_offer=ARTICLE_PAGE&utm_content=DOCS) tutorial on HashiCorp Learn.
+
 The general lifecycle for resources is described in the
 [Resource Behavior](/docs/language/resources/behavior.html) page. Some details of
 that behavior can be customized using the special nested `lifecycle` block
@@ -45,6 +47,9 @@ The following arguments can be used within a `lifecycle` block:
     avoid collisions, for example. Terraform CLI cannot automatically activate
     such features, so you must understand the constraints for each resource
     type before using `create_before_destroy` with it.
+
+    Destroy provisioners of this resource will not run if `create_before_destroy`
+    is set to `true`. We may address this in the future, and this [GitHub issue](https://github.com/hashicorp/terraform/issues/13549) contains more details.
 
 * `prevent_destroy` (bool) - This meta-argument, when set to `true`, will
   cause Terraform to reject with an error any plan that would destroy the

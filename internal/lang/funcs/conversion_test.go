@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/google/go-cmp/cmp"
+	"github.com/hashicorp/terraform/internal/lang/marks"
 	"github.com/zclconf/go-cty/cty"
 )
 
@@ -60,6 +62,12 @@ func TestTo(t *testing.T) {
 			cty.StringVal("a").Mark("boop"),
 			cty.Bool,
 			cty.DynamicVal,
+			`cannot convert "a" to bool; only the strings "true" or "false" are allowed`,
+		},
+		{
+			cty.StringVal("a").Mark(marks.Sensitive),
+			cty.Bool,
+			cty.DynamicVal,
 			`cannot convert this sensitive string to bool`,
 		},
 		{
@@ -70,6 +78,12 @@ func TestTo(t *testing.T) {
 		},
 		{
 			cty.StringVal("a").Mark("boop"),
+			cty.Number,
+			cty.DynamicVal,
+			`cannot convert "a" to number; given string must be a decimal representation of a number`,
+		},
+		{
+			cty.StringVal("a").Mark(marks.Sensitive),
 			cty.Number,
 			cty.DynamicVal,
 			`cannot convert this sensitive string to number`,
@@ -175,5 +189,94 @@ func TestTo(t *testing.T) {
 				t.Errorf("wrong result\ngot:  %#v\nwant: %#v", got, test.Want)
 			}
 		})
+	}
+}
+
+func TestType(t *testing.T) {
+	tests := []struct {
+		Input cty.Value
+		Want  string
+	}{
+		// Primititves
+		{
+			cty.StringVal("a"),
+			"string",
+		},
+		{
+			cty.NumberIntVal(42),
+			"number",
+		},
+		{
+			cty.BoolVal(true),
+			"bool",
+		},
+		// Collections
+		{
+			cty.EmptyObjectVal,
+			`object({})`,
+		},
+		{
+			cty.EmptyTupleVal,
+			`tuple([])`,
+		},
+		{
+			cty.ListValEmpty(cty.String),
+			`list(string)`,
+		},
+		{
+			cty.MapValEmpty(cty.String),
+			`map(string)`,
+		},
+		{
+			cty.SetValEmpty(cty.String),
+			`set(string)`,
+		},
+		{
+			cty.ListVal([]cty.Value{cty.StringVal("a")}),
+			`list(string)`,
+		},
+		{
+			cty.ListVal([]cty.Value{cty.ListVal([]cty.Value{cty.NumberIntVal(42)})}),
+			`list(list(number))`,
+		},
+		{
+			cty.ListVal([]cty.Value{cty.MapValEmpty(cty.String)}),
+			`list(map(string))`,
+		},
+		{
+			cty.ListVal([]cty.Value{cty.ObjectVal(map[string]cty.Value{
+				"foo": cty.StringVal("bar"),
+			})}),
+			"list(\n    object({\n        foo: string,\n    }),\n)",
+		},
+		// Unknowns and Nulls
+		{
+			cty.UnknownVal(cty.String),
+			"string",
+		},
+		{
+			cty.NullVal(cty.Object(map[string]cty.Type{
+				"foo": cty.String,
+			})),
+			"object({\n    foo: string,\n})",
+		},
+		{ // irrelevant marks do nothing
+			cty.ListVal([]cty.Value{cty.ObjectVal(map[string]cty.Value{
+				"foo": cty.StringVal("bar").Mark("ignore me"),
+			})}),
+			"list(\n    object({\n        foo: string,\n    }),\n)",
+		},
+	}
+	for _, test := range tests {
+		got, err := Type([]cty.Value{test.Input})
+		if err != nil {
+			t.Fatalf("unexpected error: %s", err)
+		}
+		// The value is marked to help with formatting
+		got, _ = got.Unmark()
+
+		if got.AsString() != test.Want {
+			t.Errorf("wrong result:\n%s", cmp.Diff(got.AsString(), test.Want))
+		}
 	}
 }

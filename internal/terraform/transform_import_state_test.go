@@ -1,7 +1,6 @@
 package terraform
 
 import (
-	"fmt"
 	"strings"
 	"testing"
 
@@ -25,6 +24,7 @@ func TestGraphNodeImportStateExecute(t *testing.T) {
 			},
 		},
 	}
+	provider.ConfigureProvider(providers.ConfigureProviderRequest{})
 
 	ctx := &MockEvalContext{
 		StateState:       state.SyncWrapper(),
@@ -65,6 +65,7 @@ func TestGraphNodeImportStateExecute(t *testing.T) {
 func TestGraphNodeImportStateSubExecute(t *testing.T) {
 	state := states.NewState()
 	provider := testProvider("aws")
+	provider.ConfigureProvider(providers.ConfigureProviderRequest{})
 	ctx := &MockEvalContext{
 		StateState:       state.SyncWrapper(),
 		ProviderProvider: provider,
@@ -163,5 +164,4 @@ func TestGraphNodeImportStateSubExecuteNull(t *testing.T) {
 	if !diags.HasErrors() {
 		t.Fatal("expected error for non-existent resource")
 	}
-	fmt.Println(diags.ErrWithWarnings())
 }

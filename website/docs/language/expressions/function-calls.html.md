@@ -1,6 +1,7 @@
 ---
 layout: "language"
 page_title: "Function Calls - Configuration Language"
+description: "Functions transform and combine values. Learn about Terraform's built-in functions."
 ---
 
 # Function Calls
@@ -97,8 +98,8 @@ dynamically on disk as part of the plan or apply steps.
 
 The `timestamp` function returns a representation of the current system time
 at the point when Terraform calls it, and the `uuid` function returns a random
-result which differs on each call. Without any special behavior these would
-would both cause the final configuration during the apply step not to match the
+result which differs on each call. Without any special behavior, these would
+both cause the final configuration during the apply step not to match the
 actions shown in the plan, which violates the Terraform execution model.
 
 For that reason, Terraform arranges for both of those functions to produce

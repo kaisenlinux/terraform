@@ -8,8 +8,6 @@ description: |-
 
 # pg
 
-**Kind: Standard (with locking)**
-
 Stores the state in a [Postgres database](https://www.postgresql.org) version 10 or newer.
 
 This backend supports [state locking](/docs/language/state/locking.html).
@@ -61,7 +59,7 @@ To make use of the pg remote state in another configuration, use the [`terraform
 ```hcl
 data "terraform_remote_state" "network" {
   backend = "pg"
-  config {
+  config = {
     conn_str = "postgres://localhost/terraform_backend"
   }
 }
