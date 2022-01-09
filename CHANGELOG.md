@@ -1,3 +1,33 @@
+## 1.1.3 (January 06, 2022)
+
+BUG FIXES:
+
+* `terraform init`: Will now remove from [the dependency lock file](https://www.terraform.io/language/files/dependency-lock) entries for providers not used in the current configuration. Previously it would leave formerly-used providers behind in the lock file, leading to "missing or corrupted provider plugins" errors when other commands verified the consistency of the installed plugins against the locked plugins. ([#30192](https://github.com/hashicorp/terraform/issues/30192))
+* config: Fix panic when encountering an invalid provider block within a module ([#30095](https://github.com/hashicorp/terraform/issues/30095))
+* config: Fix cycle error when the index of a module containing move statements is changed ([#30232](https://github.com/hashicorp/terraform/issues/30232))
+* config: Fix inconsistent ordering with nested move operations ([#30253](https://github.com/hashicorp/terraform/issues/30253))
+* config: Fix `moved` block refactoring to include nested modules ([#30233](https://github.com/hashicorp/terraform/issues/30233))
+* functions: Redact sensitive values from function call error messages ([#30067](https://github.com/hashicorp/terraform/issues/30067))
+* `terraform show`: Disable plan state lineage checks, ensuring that we can show plan files which were generated against non-default state files ([#30205](https://github.com/hashicorp/terraform/issues/30205))
+
+## 1.1.2 (December 17, 2021)
+
+**If you are using Terraform CLI v1.1.0 or v1.1.1, please upgrade to this new version as soon as possible.**
+
+Terraform CLI v1.1.0 and v1.1.1 both have a bug where a failure to construct the apply-time graph can cause Terraform to incorrectly report success and save an empty state, effectively "forgetting" all existing infrastructure. Although configurations that already worked on previous releases should not encounter this problem, it's possible that incorrect _future_ configuration changes would trigger this behavior during the apply step.
+
+BUG FIXES:
+
+* config: Fix panic when using `-target` in combination with `moved` blocks within modules ([#30189](https://github.com/hashicorp/terraform/issues/30189))
+* core: Fix condition which could lead to an empty state being written when there is a failure building the apply graph ([#30199](https://github.com/hashicorp/terraform/issues/30199))
+
+## 1.1.1 (December 15, 2021)
+
+BUG FIXES:
+
+* core: Fix crash with orphaned module instance due to changed `count` or `for_each` value ([#30151](https://github.com/hashicorp/terraform/issues/30151))
+* core: Fix regression where some expressions failed during validation when referencing resources expanded with `count` or `for_each` ([#30171](https://github.com/hashicorp/terraform/issues/30171))
+
 ## 1.1.0 (December 08, 2021)
 
 Terraform v1.1.0 is a new minor release, containing some new features and some bug fixes whose scope was too large for inclusion in a patch release.
