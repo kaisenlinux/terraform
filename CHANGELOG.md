@@ -1,3 +1,11 @@
+## 1.1.7 (March 02, 2022)
+
+BUG FIXES:
+
+* `terraform show -json`: Improve performance for deeply-nested object values. The previous implementation was accidentally quadratic, which could result in very long execution time for generating JSON plans, and timeouts on Terraform Cloud and Terraform Enterprise. ([#30561](https://github.com/hashicorp/terraform/issues/30561))
+* cloud: Update go-slug for terraform.tfstate exclusion to prevent a user from getting an error
+    after migrating state to TFC.
+
 ## 1.1.6 (February 16, 2022)
 
 BUG FIXES:
