@@ -454,6 +454,7 @@ func (p *blockBodyDiffPrinter) writeNestedAttrDiff(
 	nameLen, indent int, path cty.Path, action plans.Action, showJustNew bool) {
 
 	p.buf.WriteString("\n")
+	p.writeSensitivityWarning(old, new, indent, action, false)
 	p.buf.WriteString(strings.Repeat(" ", indent))
 	p.writeActionSymbol(action)
 
@@ -461,6 +462,14 @@ func (p *blockBodyDiffPrinter) writeNestedAttrDiff(
 	p.buf.WriteString(name)
 	p.buf.WriteString(p.color.Color("[reset]"))
 	p.buf.WriteString(strings.Repeat(" ", nameLen-len(name)))
+
+	if old.HasMark(marks.Sensitive) || new.HasMark(marks.Sensitive) {
+		p.buf.WriteString(" = (sensitive value)")
+		if p.pathForcesNewResource(path) {
+			p.buf.WriteString(p.color.Color(forcesNewResourceCaption))
+		}
+		return
+	}
 
 	result := &blockBodyDiffResult{}
 	switch objS.Nesting {
@@ -1481,24 +1490,21 @@ func (p *blockBodyDiffPrinter) writeValueDiff(old, new cty.Value, indent int, pa
 			p.buf.WriteString("\n")
 
 			var allKeys []string
-			displayKeys := make(map[string]string)
 			keyLen := 0
 			for it := old.ElementIterator(); it.Next(); {
 				k, _ := it.Element()
 				keyStr := k.AsString()
 				allKeys = append(allKeys, keyStr)
-				displayKeys[keyStr] = displayAttributeName(keyStr)
-				if len(displayKeys[keyStr]) > keyLen {
-					keyLen = len(displayKeys[keyStr])
+				if len(keyStr) > keyLen {
+					keyLen = len(keyStr)
 				}
 			}
 			for it := new.ElementIterator(); it.Next(); {
 				k, _ := it.Element()
 				keyStr := k.AsString()
 				allKeys = append(allKeys, keyStr)
-				displayKeys[keyStr] = displayAttributeName(keyStr)
-				if len(displayKeys[keyStr]) > keyLen {
-					keyLen = len(displayKeys[keyStr])
+				if len(keyStr) > keyLen {
+					keyLen = len(keyStr)
 				}
 			}
 
@@ -1541,8 +1547,8 @@ func (p *blockBodyDiffPrinter) writeValueDiff(old, new cty.Value, indent int, pa
 
 				p.buf.WriteString(strings.Repeat(" ", indent+2))
 				p.writeActionSymbol(action)
-				p.writeValue(cty.StringVal(displayKeys[k]), action, indent+4)
-				p.buf.WriteString(strings.Repeat(" ", keyLen-len(displayKeys[k])))
+				p.writeValue(cty.StringVal(k), action, indent+4)
+				p.buf.WriteString(strings.Repeat(" ", keyLen-len(k)))
 				p.buf.WriteString(" = ")
 				switch action {
 				case plans.Create, plans.NoOp:

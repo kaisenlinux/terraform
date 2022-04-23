@@ -1,3 +1,9 @@
+terraform (1.1.9-1kaisen) kaisen-packages; urgency=medium
+
+  * Import 1.1.9 release
+
+ -- Kevin Chevreuil - Kaisen <kaisen@kaisenlinux.org>  Sat, 23 Apr 2022 19:53:19 +0100
+
 terraform (1.1.8-1kaisen) kaisen-packages; urgency=medium
 
   * Import 1.1.8 release
