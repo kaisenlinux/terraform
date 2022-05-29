@@ -173,6 +173,13 @@ For ease of consumption by callers, the plan representation includes a partial r
       // - "delete_because_each_key": The corresponding resource uses for_each,
       //   but the instance key doesn't match any of the keys in the
       //   currently-configured for_each value.
+      // - "read_because_config_unknown": For a data resource, Terraform cannot
+      //   read the data during the plan phase because of values in the
+      //   configuration that won't be known until the apply phase.
+      // - "read_because_dependency_pending": For a data resource, Terraform
+      //   cannot read the data during the plan phase because the data
+      //   resource depends on at least one managed resource that also has
+      //   a pending change in the same plan.
       //
       // If there is no special reason to note, Terraform will omit this
       // property altogether.
@@ -217,6 +224,7 @@ The following example illustrates the structure of a `<values-representation>`:
   "outputs": {
     "private_ip": {
       "value": "192.168.3.2",
+      "type": "string",
       "sensitive": false
     }
   },
@@ -271,7 +279,7 @@ The following example illustrates the structure of a `<values-representation>`:
         // "sensitive_values" is the JSON representation of the sensitivity of
         // the resource's attribute values. Only attributes which are sensitive
         // are included in this structure.
-        "values": {
+        "sensitive_values": {
           "id": true,
         }
       }
@@ -307,6 +315,8 @@ The following example illustrates the structure of a `<values-representation>`:
 
 The translation of attribute and output values is the same intuitive mapping from HCL types to JSON types used by Terraform's [`jsonencode`](/language/functions/jsonencode) function. This mapping does lose some information: lists, sets, and tuples all lower to JSON arrays while maps and objects both lower to JSON objects. Unknown values and null values are both treated as absent or null.
 
+Output values include a `"type"` field, which is a [serialization of the value's type](https://pkg.go.dev/github.com/zclconf/go-cty/cty#Type.MarshalJSON). For primitive types this is a string value, such as `"number"` or `"bool"`. Complex types are represented as a nested JSON array, such as `["map","string"]` or `["object",{"a":"number"}]`. This can be used to reconstruct the output value with the correct type.
+
 Only the "current" object for each resource instance is described. "Deposed" objects are not reflected in this structure at all; in plan representations, you can refer to the change representations for further details.
 
 The intent of this structure is to give a caller access to a similar level of detail as is available to expressions within the configuration itself. This common representation is not suitable for all use-cases because it loses information compared to the data structures it is built from. For more complex needs, use the more elaborate changes and configuration representations.
@@ -323,7 +333,7 @@ Because the configuration models are produced at a stage prior to expression eva
   // the configuration tree, flattened into a single map for convenience since
   // provider configurations are the one concept in Terraform that can span
   // across module boundaries.
-  "provider_configs": {
+  "provider_config": {
 
     // Keys in the provider_configs map are to be considered opaque by callers,
     // and used just for lookups using the "provider_config_key" property in each
@@ -332,6 +342,9 @@ Because the configuration models are produced at a stage prior to expression eva
 
       // "name" is the name of the provider without any alias
       "name": "aws",
+
+      // "full_name" is the fully-qualified provider name
+      "full_name": "registry.terraform.io/hashicorp/aws",
 
       // "alias" is the alias set for a non-default configuration, or unset for
       // a default configuration.
@@ -378,7 +391,9 @@ Because the configuration models are produced at a stage prior to expression eva
 
         // "provider_config_key" is the key into "provider_configs" (shown
         // above) for the provider configuration that this resource is
-        // associated with.
+        // associated with. If the provider configuration was passed into
+        // this module from the parent module, the key will point to the
+        // original provider config block.
         "provider_config_key": "opaque_provider_ref_aws",
 
         // "provisioners" is an optional field which describes any provisioners.
@@ -440,7 +455,7 @@ Because the configuration models are produced at a stage prior to expression eva
         // "module" is a representation of the configuration of the child module
         // itself, using the same structure as the "root_module" object,
         // recursively describing the full module tree.
-        "module": <module-configuration-representation>,
+        "module": <module-configuration-representation>
       }
     }
   }

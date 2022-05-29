@@ -143,12 +143,17 @@ func (n *NodeAbstractResource) References() []*addrs.Reference {
 		refs, _ = lang.ReferencesInExpr(c.ForEach)
 		result = append(result, refs...)
 
+		for _, expr := range c.TriggersReplacement {
+			refs, _ = lang.ReferencesInExpr(expr)
+			result = append(result, refs...)
+		}
+
 		// ReferencesInBlock() requires a schema
 		if n.Schema != nil {
 			refs, _ = lang.ReferencesInBlock(c.Config, n.Schema)
+			result = append(result, refs...)
 		}
 
-		result = append(result, refs...)
 		if c.Managed != nil {
 			if c.Managed.Connection != nil {
 				refs, _ = lang.ReferencesInBlock(c.Managed.Connection.Config, connectionBlockSupersetSchema)
@@ -172,6 +177,20 @@ func (n *NodeAbstractResource) References() []*addrs.Reference {
 				result = append(result, refs...)
 			}
 		}
+
+		for _, check := range c.Preconditions {
+			refs, _ := lang.ReferencesInExpr(check.Condition)
+			result = append(result, refs...)
+			refs, _ = lang.ReferencesInExpr(check.ErrorMessage)
+			result = append(result, refs...)
+		}
+		for _, check := range c.Postconditions {
+			refs, _ := lang.ReferencesInExpr(check.Condition)
+			result = append(result, refs...)
+			refs, _ = lang.ReferencesInExpr(check.ErrorMessage)
+			result = append(result, refs...)
+		}
+
 		return result
 	}
 
@@ -380,14 +399,6 @@ func (n *NodeAbstractResource) readResourceInstanceState(ctx EvalContext, addr a
 
 	obj, err := src.Decode(schema.ImpliedType())
 	if err != nil {
-		// In the case of a data source which contains incompatible state
-		// migrations, we can just ignore decoding errors and skip comparing
-		// the prior state.
-		if addr.Resource.Resource.Mode == addrs.DataResourceMode {
-			log.Printf("[DEBUG] readResourceInstanceState: data source schema change for %s prevents decoding: %s", addr, err)
-			return nil, diags
-		}
-
 		diags = diags.Append(err)
 	}
 

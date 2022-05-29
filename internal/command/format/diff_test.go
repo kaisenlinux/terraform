@@ -534,6 +534,70 @@ new line
     }
 `,
 		},
+		"read during apply because of unknown configuration": {
+			Action:       plans.Read,
+			ActionReason: plans.ResourceInstanceReadBecauseConfigUnknown,
+			Mode:         addrs.DataResourceMode,
+			Before: cty.ObjectVal(map[string]cty.Value{
+				"name": cty.StringVal("name"),
+			}),
+			After: cty.ObjectVal(map[string]cty.Value{
+				"name": cty.StringVal("name"),
+			}),
+			Schema: &configschema.Block{
+				Attributes: map[string]*configschema.Attribute{
+					"name": {Type: cty.String, Optional: true},
+				},
+			},
+			ExpectedOutput: `  # data.test_instance.example will be read during apply
+  # (config refers to values not yet known)
+ <= data "test_instance" "example" {
+        name = "name"
+    }
+`,
+		},
+		"read during apply because of pending changes to upstream dependency": {
+			Action:       plans.Read,
+			ActionReason: plans.ResourceInstanceReadBecauseDependencyPending,
+			Mode:         addrs.DataResourceMode,
+			Before: cty.ObjectVal(map[string]cty.Value{
+				"name": cty.StringVal("name"),
+			}),
+			After: cty.ObjectVal(map[string]cty.Value{
+				"name": cty.StringVal("name"),
+			}),
+			Schema: &configschema.Block{
+				Attributes: map[string]*configschema.Attribute{
+					"name": {Type: cty.String, Optional: true},
+				},
+			},
+			ExpectedOutput: `  # data.test_instance.example will be read during apply
+  # (depends on a resource or a module with changes pending)
+ <= data "test_instance" "example" {
+        name = "name"
+    }
+`,
+		},
+		"read during apply for unspecified reason": {
+			Action: plans.Read,
+			Mode:   addrs.DataResourceMode,
+			Before: cty.ObjectVal(map[string]cty.Value{
+				"name": cty.StringVal("name"),
+			}),
+			After: cty.ObjectVal(map[string]cty.Value{
+				"name": cty.StringVal("name"),
+			}),
+			Schema: &configschema.Block{
+				Attributes: map[string]*configschema.Attribute{
+					"name": {Type: cty.String, Optional: true},
+				},
+			},
+			ExpectedOutput: `  # data.test_instance.example will be read during apply
+ <= data "test_instance" "example" {
+        name = "name"
+    }
+`,
+		},
 		"show all identifying attributes even if unchanged": {
 			Action: plans.Update,
 			Mode:   addrs.ManagedResourceMode,
@@ -5184,10 +5248,6 @@ func runTestCases(t *testing.T, testCases map[string]testCase) {
 			case !beforeVal.IsKnown():
 				beforeVal = cty.UnknownVal(ty) // allow mistyped unknowns
 			}
-			before, err := plans.NewDynamicValue(beforeVal, ty)
-			if err != nil {
-				t.Fatal(err)
-			}
 
 			afterVal := tc.After
 			switch { // Some fixups to make the test cases a little easier to write
@@ -5195,10 +5255,6 @@ func runTestCases(t *testing.T, testCases map[string]testCase) {
 				afterVal = cty.NullVal(ty) // allow mistyped nulls
 			case !afterVal.IsKnown():
 				afterVal = cty.UnknownVal(ty) // allow mistyped unknowns
-			}
-			after, err := plans.NewDynamicValue(afterVal, ty)
-			if err != nil {
-				t.Fatal(err)
 			}
 
 			addr := addrs.Resource{
@@ -5214,7 +5270,7 @@ func runTestCases(t *testing.T, testCases map[string]testCase) {
 				prevRunAddr = addr
 			}
 
-			change := &plans.ResourceInstanceChangeSrc{
+			change := &plans.ResourceInstanceChange{
 				Addr:        addr,
 				PrevRunAddr: prevRunAddr,
 				DeposedKey:  tc.DeposedKey,
@@ -5222,12 +5278,10 @@ func runTestCases(t *testing.T, testCases map[string]testCase) {
 					Provider: addrs.NewDefaultProvider("test"),
 					Module:   addrs.RootModule,
 				},
-				ChangeSrc: plans.ChangeSrc{
-					Action:         tc.Action,
-					Before:         before,
-					After:          after,
-					BeforeValMarks: tc.BeforeValMarks,
-					AfterValMarks:  tc.AfterValMarks,
+				Change: plans.Change{
+					Action: tc.Action,
+					Before: beforeVal.MarkWithPaths(tc.BeforeValMarks),
+					After:  afterVal.MarkWithPaths(tc.AfterValMarks),
 				},
 				ActionReason:    tc.ActionReason,
 				RequiredReplace: tc.RequiredReplace,
