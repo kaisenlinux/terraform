@@ -25,7 +25,7 @@ func summarizeTaskResults(taskResults []*tfe.TaskResult) *taskResultSummary {
 			return &taskResultSummary{
 				unreachable: true,
 			}
-		} else if task.Status == "running" || task.Status == "pendingCountnding" {
+		} else if task.Status == "running" || task.Status == "pending" {
 			pendingCount++
 		} else if task.Status == "passed" {
 			passedCount++
@@ -106,7 +106,12 @@ func (b *Cloud) runTasksWithTaskResults(context *IntegrationContext, output Inte
 			title := fmt.Sprintf(`%s ⸺   %s`, t.TaskName, status)
 			output.SubOutput(title)
 
-			output.SubOutput(fmt.Sprintf("[dim]%s", t.Message))
+			if len(t.Message) > 0 {
+				output.SubOutput(fmt.Sprintf("[dim]%s", t.Message))
+			}
+			if len(t.URL) > 0 {
+				output.SubOutput(fmt.Sprintf("[dim]Details: %s", t.URL))
+			}
 			output.SubOutput("")
 		}
 

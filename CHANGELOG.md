@@ -1,3 +1,15 @@
+## 1.2.2 (June 01, 2022)
+
+ENHANCEMENTS:
+
+* Invalid `-var` arguments with spaces between the name and value now have an improved error message ([#30985](https://github.com/hashicorp/terraform/issues/30985))
+
+BUG FIXES:
+
+* Terraform now hides invalid input values for sensitive root module variables when generating error diagnostics ([#30552](https://github.com/hashicorp/terraform/issues/30552))
+* Fixed crash on CLI autocomplete ([#31160](https://github.com/hashicorp/terraform/issues/31160))
+* The "Configuration contains unknown values" error message now includes attribute paths ([#3111](https://github.com/hashicorp/terraform/issues/3111))
+
 ## 1.2.1 (May 23, 2022)
 
 BUG FIXES:
