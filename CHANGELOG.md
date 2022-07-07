@@ -1,3 +1,36 @@
+## 1.2.4 (June 29, 2022)
+
+ENHANCEMENTS:
+
+* Improved validation of `required_providers` to prevent single providers from being required with multiple names. ([#31218](https://github.com/hashicorp/terraform/issues/31218))
+* Improved plan performance by optimizing `addrs.Module.String` for allocations. ([#31293](https://github.com/hashicorp/terraform/issues/31293))
+
+BUG FIXES:
+
+* backend/http: Fixed bug where the HTTP backend would fail to retry acquiring the state lock and ignored the `-lock-timeout` flag. ([#31256](https://github.com/hashicorp/terraform/issues/31256))
+* Fix crash if a `precondition` or `postcondition` block omitted the required `condition` argument. ([#31290](https://github.com/hashicorp/terraform/issues/31290))
+
+## 1.2.3 (June 15, 2022)
+
+UPGRADE NOTES:
+
+* The following remote state backends are now marked as deprecated, and are
+  planned to be removed in a future Terraform release. These backends have
+  been unmaintained since before Terraform v1.0, and may contain known bugs,
+  outdated packages, or security vulnerabilities.
+  - artifactory
+  - etcd
+  - etcdv3
+  - manta
+  - swift
+
+BUG FIXES:
+
+* Missing check for error diagnostics in GetProviderSchema could result in panic ([#31184](https://github.com/hashicorp/terraform/issues/31184))
+* Module registries returning X-Terraform-Get locations with no URL would error with "no getter available for X-Terraform-Get source protocol" ([#31237](https://github.com/hashicorp/terraform/issues/31237))
+* Fix crash from concurrent operation on shared set of resource instance dependencies ([#31246](https://github.com/hashicorp/terraform/issues/31246))
+* backend/cos: `tencentcloud-terraform-lock` tag was not removed in all cases ([#31223](https://github.com/hashicorp/terraform/issues/31223))
+
 ## 1.2.2 (June 01, 2022)
 
 ENHANCEMENTS:
@@ -8,7 +41,7 @@ BUG FIXES:
 
 * Terraform now hides invalid input values for sensitive root module variables when generating error diagnostics ([#30552](https://github.com/hashicorp/terraform/issues/30552))
 * Fixed crash on CLI autocomplete ([#31160](https://github.com/hashicorp/terraform/issues/31160))
-* The "Configuration contains unknown values" error message now includes attribute paths ([#3111](https://github.com/hashicorp/terraform/issues/3111))
+* The "Configuration contains unknown values" error message now includes attribute paths ([#31111](https://github.com/hashicorp/terraform/issues/31111))
 
 ## 1.2.1 (May 23, 2022)
 
