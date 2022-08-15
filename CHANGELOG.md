@@ -1,3 +1,36 @@
+## 1.2.7 (August 10, 2022)
+
+ENHANCEMENTS:
+
+* config: Check for direct references to deprecated computed attributes. ([#31576](https://github.com/hashicorp/terraform/issues/31576))
+
+BUG FIXES:
+
+* config: Fix an crash if a submodule contains a resource whose implied provider local name contains invalid characters, by adding additional validation rules to turn it into a real error. ([#31573](https://github.com/hashicorp/terraform/issues/31573))
+* core: Fix some handling of provider schema attributes which use the newer "structural typing" mechanism introduced with protocol version 6, and therefore with the new Terraform Plugin Framework ([#31532](https://github.com/hashicorp/terraform/issues/31532))
+* command: Add missing output text for applyable refresh plans. ([#31469](https://github.com/hashicorp/terraform/issues/31469))
+
+## 1.2.6 (July 27, 2022)
+
+ENHANCEMENTS:
+
+* Add a warning and guidance when `terraform init` fails to fully populate the `.terraform.lock.hcl` file. ([#31399](https://github.com/hashicorp/terraform/issues/31399))
+* Add a direct link to the relevant documentation when `terraform init` fails on missing checksums. ([#31408](https://github.com/hashicorp/terraform/issues/31408))
+
+BUG FIXES:
+
+* Fix panic on `terraform show` when state file is invalid or unavailable. ([#31444](https://github.com/hashicorp/terraform/issues/31444))
+* Fix `terraform providers lock` command failing on missing checksums. ([#31389](https://github.com/hashicorp/terraform/issues/31389))
+* Some combinations of move block operations would be executed in the wrong order ([#31499](https://github.com/hashicorp/terraform/issues/31499))
+* Don't attribute an error to the provider when a computed attribute is listed in `ignore_changes` ([#31509](https://github.com/hashicorp/terraform/issues/31509))
+
+## 1.2.5 (July 13, 2022)
+
+BUG FIXES:
+
+* Report correct error message when a prerelease field is included in the `required_version` global constraint. ([#31331](https://github.com/hashicorp/terraform/issues/31331))
+* Fix case when extra blank lines were inserted into the plan for unchanged blocks. ([#31330](https://github.com/hashicorp/terraform/issues/31330))
+
 ## 1.2.4 (June 29, 2022)
 
 ENHANCEMENTS:
