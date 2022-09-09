@@ -1,3 +1,16 @@
+## 1.2.9 (September 07, 2022)
+
+ENHANCEMENTS:
+
+* terraform init: add link to documentation when a checksum is missing from the lock file. ([#31726](https://github.com/hashicorp/terraform/issues/31726))
+
+## 1.2.8 (August 24, 2022)
+
+BUG FIXES:
+
+* config: The `flatten` function will no longer panic if given a null value that has been explicitly converted to or implicitly inferred as having a list, set, or tuple type. Previously Terraform would panic in such a situation because it tried to "flatten" the contents of the null value into the result, which is impossible. ([#31675](https://github.com/hashicorp/terraform/issues/31675))
+* config: The `tolist`, `toset`, and `tomap` functions, and various automatic conversions that include similar logic, will no longer panic when asked to infer an element type that is convertable from both a tuple type and a list type whose element type is not yet known. ([#31675](https://github.com/hashicorp/terraform/issues/31675))
+
 ## 1.2.7 (August 10, 2022)
 
 ENHANCEMENTS:
