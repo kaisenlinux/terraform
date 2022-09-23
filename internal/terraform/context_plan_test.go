@@ -2924,7 +2924,7 @@ func TestContext2Plan_countIncreaseFromOneCorrupted(t *testing.T) {
 // A common pattern in TF configs is to have a set of resources with the same
 // count and to use count.index to create correspondences between them:
 //
-//    foo_id = "${foo.bar.*.id[count.index]}"
+//	foo_id = "${foo.bar.*.id[count.index]}"
 //
 // This test is for the situation where some instances already exist and the
 // count is increased. In that case, we should see only the create diffs
@@ -3093,6 +3093,15 @@ func TestContext2Plan_forEachUnknownValue(t *testing.T) {
 	if !strings.Contains(gotErrStr, wantErrStr) {
 		t.Fatalf("missing expected error\ngot: %s\n\nwant: error containing %q", gotErrStr, wantErrStr)
 	}
+
+	// We should have a diagnostic that is marked as being caused by unknown
+	// values.
+	for _, diag := range diags {
+		if tfdiags.DiagnosticCausedByUnknown(diag) {
+			return // don't fall through to the error below
+		}
+	}
+	t.Fatalf("no diagnostic is marked as being caused by unknown\n%s", diags.Err().Error())
 }
 
 func TestContext2Plan_destroy(t *testing.T) {

@@ -27,11 +27,13 @@ import (
 	"github.com/hashicorp/terraform/internal/command/views"
 	"github.com/hashicorp/terraform/internal/command/webbrowser"
 	"github.com/hashicorp/terraform/internal/command/workdir"
+	"github.com/hashicorp/terraform/internal/configs"
 	"github.com/hashicorp/terraform/internal/configs/configload"
 	"github.com/hashicorp/terraform/internal/getproviders"
 	legacy "github.com/hashicorp/terraform/internal/legacy/terraform"
 	"github.com/hashicorp/terraform/internal/providers"
 	"github.com/hashicorp/terraform/internal/provisioners"
+	"github.com/hashicorp/terraform/internal/states"
 	"github.com/hashicorp/terraform/internal/terminal"
 	"github.com/hashicorp/terraform/internal/terraform"
 	"github.com/hashicorp/terraform/internal/tfdiags"
@@ -130,6 +132,24 @@ type Meta struct {
 	// just trusting that someone else did it before running Terraform.
 	UnmanagedProviders map[addrs.Provider]*plugin.ReattachConfig
 
+	// AllowExperimentalFeatures controls whether a command that embeds this
+	// Meta is permitted to make use of experimental Terraform features.
+	//
+	// Set this field only during the initial creation of Meta. If you change
+	// this field after calling methods of type Meta then the resulting
+	// behavior is undefined.
+	//
+	// In normal code this would be set by package main only in builds
+	// explicitly marked as being alpha releases or development snapshots,
+	// making experimental features unavailable otherwise. Test code may
+	// choose to set this if it needs to exercise experimental features.
+	//
+	// Some experiments predated the addition of this setting, and may
+	// therefore still be available even if this flag is false. Our intent
+	// is that all/most _future_ experiments will be unavailable unless this
+	// flag is set, to reinforce that experiments are not for production use.
+	AllowExperimentalFeatures bool
+
 	//----------------------------------------------------------
 	// Protected: commands can set these
 	//----------------------------------------------------------
@@ -212,9 +232,6 @@ type Meta struct {
 	reconfigure      bool
 	migrateState     bool
 	compactWarnings  bool
-
-	// Used with the import command to allow import of state when no matching config exists.
-	allowMissingConfig bool
 
 	// Used with commands which write state to allow users to write remote
 	// state even if the remote and local Terraform versions don't match.
@@ -763,4 +780,49 @@ func (m *Meta) checkRequiredVersion() tfdiags.Diagnostics {
 	}
 
 	return nil
+}
+
+// MaybeGetSchemas attempts to load and return the schemas
+// If there is not enough information to return the schemas,
+// it could potentially return nil without errors. It is the
+// responsibility of the caller to handle the lack of schema
+// information accordingly
+func (c *Meta) MaybeGetSchemas(state *states.State, config *configs.Config) (*terraform.Schemas, tfdiags.Diagnostics) {
+	var diags tfdiags.Diagnostics
+
+	path, err := os.Getwd()
+	if err != nil {
+		diags.Append(tfdiags.SimpleWarning(failedToLoadSchemasMessage))
+		return nil, diags
+	}
+
+	if config == nil {
+		config, diags = c.loadConfig(path)
+		if diags.HasErrors() {
+			diags.Append(tfdiags.SimpleWarning(failedToLoadSchemasMessage))
+			return nil, diags
+		}
+	}
+
+	if config != nil || state != nil {
+		opts, err := c.contextOpts()
+		if err != nil {
+			diags = diags.Append(err)
+			return nil, diags
+		}
+		tfCtx, ctxDiags := terraform.NewContext(opts)
+		diags = diags.Append(ctxDiags)
+		if ctxDiags.HasErrors() {
+			return nil, diags
+		}
+		var schemaDiags tfdiags.Diagnostics
+		schemas, schemaDiags := tfCtx.Schemas(config, state)
+		diags = diags.Append(schemaDiags)
+		if schemaDiags.HasErrors() {
+			return nil, diags
+		}
+		return schemas, diags
+
+	}
+	return nil, diags
 }

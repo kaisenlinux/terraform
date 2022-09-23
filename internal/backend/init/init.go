@@ -12,21 +12,16 @@ import (
 
 	backendLocal "github.com/hashicorp/terraform/internal/backend/local"
 	backendRemote "github.com/hashicorp/terraform/internal/backend/remote"
-	backendArtifactory "github.com/hashicorp/terraform/internal/backend/remote-state/artifactory"
 	backendAzure "github.com/hashicorp/terraform/internal/backend/remote-state/azure"
 	backendConsul "github.com/hashicorp/terraform/internal/backend/remote-state/consul"
 	backendCos "github.com/hashicorp/terraform/internal/backend/remote-state/cos"
-	backendEtcdv2 "github.com/hashicorp/terraform/internal/backend/remote-state/etcdv2"
-	backendEtcdv3 "github.com/hashicorp/terraform/internal/backend/remote-state/etcdv3"
 	backendGCS "github.com/hashicorp/terraform/internal/backend/remote-state/gcs"
 	backendHTTP "github.com/hashicorp/terraform/internal/backend/remote-state/http"
 	backendInmem "github.com/hashicorp/terraform/internal/backend/remote-state/inmem"
 	backendKubernetes "github.com/hashicorp/terraform/internal/backend/remote-state/kubernetes"
-	backendManta "github.com/hashicorp/terraform/internal/backend/remote-state/manta"
 	backendOSS "github.com/hashicorp/terraform/internal/backend/remote-state/oss"
 	backendPg "github.com/hashicorp/terraform/internal/backend/remote-state/pg"
 	backendS3 "github.com/hashicorp/terraform/internal/backend/remote-state/s3"
-	backendSwift "github.com/hashicorp/terraform/internal/backend/remote-state/swift"
 	backendCloud "github.com/hashicorp/terraform/internal/cloud"
 )
 
@@ -43,6 +38,10 @@ import (
 // they can do so with recompilation.
 var backends map[string]backend.InitFn
 var backendsLock sync.Mutex
+
+// RemovedBackends is a record of previously supported backends which have
+// since been deprecated and removed.
+var RemovedBackends map[string]string
 
 // Init initializes the backends map with all our hardcoded backends.
 func Init(services *disco.Disco) {
@@ -68,45 +67,15 @@ func Init(services *disco.Disco) {
 		// Terraform Cloud 'backend'
 		// This is an implementation detail only, used for the cloud package
 		"cloud": func() backend.Backend { return backendCloud.New(services) },
+	}
 
-		// FIXME: remove deprecated backends for v1.3
-		// Deprecated backends.
-		"azure": func() backend.Backend {
-			return deprecateBackend(
-				backendAzure.New(),
-				`Warning: "azure" name is deprecated, please use "azurerm"`,
-			)
-		},
-		"artifactory": func() backend.Backend {
-			return deprecateBackend(
-				backendArtifactory.New(),
-				`Warning: "artifactory" backend is deprecated, and will be removed in a future release."`,
-			)
-		},
-		"etcd": func() backend.Backend {
-			return deprecateBackend(
-				backendEtcdv2.New(),
-				`Warning: "etcd" backend is deprecated, and will be removed in a future release."`,
-			)
-		},
-		"etcdv3": func() backend.Backend {
-			return deprecateBackend(
-				backendEtcdv3.New(),
-				`Warning: "etcdv3" backend is deprecated, and will be removed in a future release."`,
-			)
-		},
-		"manta": func() backend.Backend {
-			return deprecateBackend(
-				backendManta.New(),
-				`Warning: "manta" backend is deprecated, and will be removed in a future release."`,
-			)
-		},
-		"swift": func() backend.Backend {
-			return deprecateBackend(
-				backendSwift.New(),
-				`Warning: "swift" backend is deprecated, and will be removed in a future release."`,
-			)
-		},
+	RemovedBackends = map[string]string{
+		"artifactory": `The "artifactory" backend is not supported in Terraform v1.3 or later.`,
+		"azure":       `The "azure" backend name has been removed, please use "azurerm".`,
+		"etcd":        `The "etcd" backend is not supported in Terraform v1.3 or later.`,
+		"etcdv3":      `The "etcdv3" backend is not supported in Terraform v1.3 or later.`,
+		"manta":       `The "manta" backend is not supported in Terraform v1.3 or later.`,
+		"swift":       `The "swift" backend is not supported in Terraform v1.3 or later.`,
 	}
 }
 

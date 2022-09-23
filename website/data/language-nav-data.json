@@ -7,11 +7,6 @@
     "hidden": true
   },
   {
-    "title": "Terraform v1.0 Compatibility Promises",
-    "path": "v1-compatibility-promises",
-    "hidden": true
-  },
-  {
     "title": "Files and Directories",
     "routes": [
       { "title": "Overview", "path": "files" },
@@ -97,23 +92,6 @@
           {
             "title": "remote-exec",
             "path": "resources/provisioners/remote-exec"
-          },
-          { "divider": true },
-          {
-            "title": "chef",
-            "path": "resources/provisioners/chef"
-          },
-          {
-            "title": "habitat",
-            "path": "resources/provisioners/habitat"
-          },
-          {
-            "title": "puppet",
-            "path": "resources/provisioners/puppet"
-          },
-          {
-            "title": "salt-masterless",
-            "path": "resources/provisioners/salt-masterless"
           }
         ]
       }
@@ -320,6 +298,10 @@
             "href": "/language/functions/chomp"
           },
           {
+            "title": "<code>endswith</code>",
+            "href": "/language/functions/endswith"
+          },
+          {
             "title": "<code>format</code>",
             "href": "/language/functions/format"
           },
@@ -351,6 +333,10 @@
           {
             "title": "<code>split</code>",
             "href": "/language/functions/split"
+          },
+          {
+            "title": "<code>startswith</code>",
+            "href": "/language/functions/startswith"
           },
           {
             "title": "<code>strrev</code>",
@@ -594,6 +580,10 @@
             "href": "/language/functions/timeadd"
           },
           {
+            "title": "<code>timecmp</code>",
+            "href": "/language/functions/timecmp"
+          },
+          {
             "title": "<code>timestamp</code>",
             "href": "/language/functions/timestamp"
           }
@@ -685,10 +675,6 @@
         "routes": [
           { "title": "<code>can</code>", "href": "/language/functions/can" },
           {
-            "title": "<code>defaults</code>",
-            "href": "/language/functions/defaults"
-          },
-          {
             "title": "<code>nonsensitive</code>",
             "href": "/language/functions/nonsensitive"
           },
@@ -777,10 +763,10 @@
       { "title": "concat", "path": "functions/concat", "hidden": true },
       { "title": "contains", "path": "functions/contains", "hidden": true },
       { "title": "csvdecode", "path": "functions/csvdecode", "hidden": true },
-      { "title": "defaults", "path": "functions/defaults", "hidden": true },
       { "title": "dirname", "path": "functions/dirname", "hidden": true },
       { "title": "distinct", "path": "functions/distinct", "hidden": true },
       { "title": "element", "path": "functions/element", "hidden": true },
+      { "title": "endswith", "path": "functions/endswith", "hidden": true },
       { "title": "file", "path": "functions/file", "hidden": true },
       { "title": "filebase64", "path": "functions/filebase64", "hidden": true },
       {
@@ -856,6 +842,7 @@
       { "title": "slice", "path": "functions/slice", "hidden": true },
       { "title": "sort", "path": "functions/sort", "hidden": true },
       { "title": "split", "path": "functions/split", "hidden": true },
+      { "title": "startswith", "path": "functions/startswith", "hidden": true },
       { "title": "strrev", "path": "functions/strrev", "hidden": true },
       { "title": "substr", "path": "functions/substr", "hidden": true },
       { "title": "sum", "path": "functions/sum", "hidden": true },
@@ -875,6 +862,7 @@
         "hidden": true
       },
       { "title": "timeadd", "path": "functions/timeadd", "hidden": true },
+      { "title": "timecmp", "path": "functions/timecmp", "hidden": true },
       { "title": "timestamp", "path": "functions/timestamp", "hidden": true },
       { "title": "title", "path": "functions/title", "hidden": true },
       { "title": "tobool", "path": "functions/tobool", "hidden": true },
@@ -924,10 +912,6 @@
                 "href": "/language/settings/backends/remote"
               },
               {
-                "title": "artifactory",
-                "href": "/language/settings/backends/artifactory"
-              },
-              {
                 "title": "azurerm",
                 "href": "/language/settings/backends/azurerm"
               },
@@ -938,14 +922,6 @@
               {
                 "title": "cos",
                 "href": "/language/settings/backends/cos"
-              },
-              {
-                "title": "etcd",
-                "href": "/language/settings/backends/etcd"
-              },
-              {
-                "title": "etcdv3",
-                "href": "/language/settings/backends/etcdv3"
               },
               {
                 "title": "gcs",
@@ -960,10 +936,6 @@
                 "href": "/language/settings/backends/kubernetes"
               },
               {
-                "title": "manta",
-                "href": "/language/settings/backends/manta"
-              },
-              {
                 "title": "oss",
                 "href": "/language/settings/backends/oss"
               },
@@ -974,10 +946,6 @@
               {
                 "title": "s3",
                 "href": "/language/settings/backends/s3"
-              },
-              {
-                "title": "swift",
-                "href": "/language/settings/backends/swift"
               }
             ]
           },
@@ -990,11 +958,6 @@
             "title": "remote",
             "hidden": true,
             "path": "settings/backends/remote"
-          },
-          {
-            "title": "artifactory",
-            "hidden": true,
-            "path": "settings/backends/artifactory"
           },
           {
             "title": "azurerm",
@@ -1012,16 +975,6 @@
             "path": "settings/backends/cos"
           },
           {
-            "title": "etcd",
-            "hidden": true,
-            "path": "settings/backends/etcd"
-          },
-          {
-            "title": "etcdv3",
-            "hidden": true,
-            "path": "settings/backends/etcdv3"
-          },
-          {
             "title": "gcs",
             "hidden": true,
             "path": "settings/backends/gcs"
@@ -1037,11 +990,6 @@
             "path": "settings/backends/kubernetes"
           },
           {
-            "title": "manta",
-            "hidden": true,
-            "path": "settings/backends/manta"
-          },
-          {
             "title": "oss",
             "hidden": true,
             "path": "settings/backends/oss"
@@ -1055,11 +1003,6 @@
             "title": "s3",
             "hidden": true,
             "path": "settings/backends/s3"
-          },
-          {
-            "title": "swift",
-            "hidden": true,
-            "path": "settings/backends/swift"
           }
         ]
       }
@@ -1092,64 +1035,13 @@
     ]
   },
   {
-    "title": "Upgrade Guides",
-    "routes": [
-      { "title": "Overview", "path": "upgrade-guides" },
-      {
-        "title": "Upgrading to Terraform v1.2",
-        "path": "upgrade-guides/1-2"
-      },
-      {
-        "title": "Upgrading to Terraform v1.1",
-        "path": "upgrade-guides/1-1"
-      },
-      {
-        "title": "Upgrading to Terraform v1.0",
-        "path": "upgrade-guides/1-0"
-      },
-      {
-        "title": "v1.0 Compatibility Promises",
-        "href": "/language/v1-compatibility-promises"
-      },
-      {
-        "title": "Upgrading to Terraform v0.15",
-        "path": "upgrade-guides/0-15"
-      },
-      {
-        "title": "Upgrading to Terraform v0.14",
-        "path": "upgrade-guides/0-14"
-      },
-      {
-        "title": "Upgrading to Terraform v0.13",
-        "path": "upgrade-guides/0-13"
-      },
-      {
-        "title": "Upgrading to Terraform v0.12",
-        "path": "upgrade-guides/0-12"
-      },
-      {
-        "title": "Upgrading to Terraform v0.11",
-        "path": "upgrade-guides/0-11"
-      },
-      {
-        "title": "Upgrading to Terraform v0.10",
-        "path": "upgrade-guides/0-10"
-      },
-      {
-        "title": "Upgrading to Terraform v0.9",
-        "path": "upgrade-guides/0-9"
-      },
-      {
-        "title": "Upgrading to Terraform v0.8",
-        "path": "upgrade-guides/0-8"
-      },
-      {
-        "title": "Upgrading to Terraform v0.7",
-        "path": "upgrade-guides/0-7"
-      }
-    ]
+    "title": "Upgrading to Terraform v1.3",
+    "path": "upgrade-guides"
+  },
+  {
+    "title": "v1.x Compatibility Promises",
+    "path": "v1-compatibility-promises"
   },
   { "divider": true },
-  { "title": "Terraform Internals", "href": "/internals" },
-  { "divider": true }
+  { "title": "Terraform Internals", "href": "/internals" }
 ]

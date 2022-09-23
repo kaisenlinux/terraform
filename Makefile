@@ -33,13 +33,16 @@ protobuf:
 	go run ./tools/protobuf-compile .
 
 fmtcheck:
-	@sh -c "'$(CURDIR)/scripts/gofmtcheck.sh'"
+	"$(CURDIR)/scripts/gofmtcheck.sh"
+
+importscheck:
+	"$(CURDIR)/scripts/goimportscheck.sh"
 
 staticcheck:
-	@sh -c "'$(CURDIR)/scripts/staticcheck.sh'"
+	"$(CURDIR)/scripts/staticcheck.sh"
 
 exhaustive:
-	@sh -c "'$(CURDIR)/scripts/exhaustive.sh'"
+	"$(CURDIR)/scripts/exhaustive.sh"
 
 # Default: run this if working on the website locally to run in watch mode.
 website:
@@ -63,4 +66,4 @@ website/build-local:
 # under parallel conditions.
 .NOTPARALLEL:
 
-.PHONY: fmtcheck generate protobuf website website-test staticcheck website/local website/build-local
+.PHONY: fmtcheck importscheck generate protobuf website website-test staticcheck website/local website/build-local

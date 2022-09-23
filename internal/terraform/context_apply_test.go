@@ -18,6 +18,9 @@ import (
 	"github.com/davecgh/go-spew/spew"
 	"github.com/go-test/deep"
 	"github.com/google/go-cmp/cmp"
+	"github.com/zclconf/go-cty/cty"
+	"github.com/zclconf/go-cty/cty/gocty"
+
 	"github.com/hashicorp/terraform/internal/addrs"
 	"github.com/hashicorp/terraform/internal/configs"
 	"github.com/hashicorp/terraform/internal/configs/configschema"
@@ -28,8 +31,6 @@ import (
 	"github.com/hashicorp/terraform/internal/provisioners"
 	"github.com/hashicorp/terraform/internal/states"
 	"github.com/hashicorp/terraform/internal/tfdiags"
-	"github.com/zclconf/go-cty/cty"
-	"github.com/zclconf/go-cty/cty/gocty"
 )
 
 func TestContext2Apply_basic(t *testing.T) {
@@ -2639,6 +2640,7 @@ func TestContext2Apply_orphanResource(t *testing.T) {
 	// The state should now be _totally_ empty, with just an empty root module
 	// (since that always exists) and no resources at all.
 	want = states.NewState()
+	want.CheckResults = &states.CheckResults{}
 	if !cmp.Equal(state, want) {
 		t.Fatalf("wrong state after step 2\ngot: %swant: %s", spew.Sdump(state), spew.Sdump(want))
 	}
@@ -7025,6 +7027,12 @@ func TestContext2Apply_targetedDestroy(t *testing.T) {
 	// test did not match actual terraform behavior: the output remains in
 	// state.
 	//
+	// The reason it remains in the state is that we prune out the root module
+	// output values from the destroy graph as part of pruning out the "update"
+	// nodes for the resources, because otherwise the root module output values
+	// force the resources to stay in the graph and can therefore cause
+	// unwanted dependency cycles.
+	//
 	// TODO: Future refactoring may enable us to remove the output from state in
 	// this case, and that would be Just Fine - this test can be modified to
 	// expect 0 outputs.
@@ -11041,6 +11049,13 @@ locals {
 	p := testProvider("test")
 
 	p.PlanResourceChangeFn = func(r providers.PlanResourceChangeRequest) (resp providers.PlanResourceChangeResponse) {
+		// this is a destroy plan
+		if r.ProposedNewState.IsNull() {
+			resp.PlannedState = r.ProposedNewState
+			resp.PlannedPrivate = r.PriorPrivate
+			return resp
+		}
+
 		n := r.ProposedNewState.AsValueMap()
 
 		if r.PriorState.IsNull() {
@@ -11453,13 +11468,20 @@ resource "test_resource" "a" {
 `})
 
 	p := testProvider("test")
-	p.PlanResourceChangeFn = func(req providers.PlanResourceChangeRequest) providers.PlanResourceChangeResponse {
+	p.PlanResourceChangeFn = func(req providers.PlanResourceChangeRequest) (resp providers.PlanResourceChangeResponse) {
+		// this is a destroy plan
+		if req.ProposedNewState.IsNull() {
+			resp.PlannedState = req.ProposedNewState
+			resp.PlannedPrivate = req.PriorPrivate
+			return resp
+		}
+
 		proposed := req.ProposedNewState.AsValueMap()
 		proposed["id"] = cty.UnknownVal(cty.String)
-		return providers.PlanResourceChangeResponse{
-			PlannedState:    cty.ObjectVal(proposed),
-			RequiresReplace: []cty.Path{{cty.GetAttrStep{Name: "value"}}},
-		}
+
+		resp.PlannedState = cty.ObjectVal(proposed)
+		resp.RequiresReplace = []cty.Path{{cty.GetAttrStep{Name: "value"}}}
+		return resp
 	}
 
 	ctx := testContext2(t, &ContextOpts{
@@ -11978,14 +12000,19 @@ resource "test_resource" "foo" {
 func TestContext2Apply_moduleVariableOptionalAttributes(t *testing.T) {
 	m := testModuleInline(t, map[string]string{
 		"main.tf": `
-terraform {
-  experiments = [module_variable_optional_attrs]
-}
-
 variable "in" {
   type = object({
-	required = string
-	optional = optional(string)
+    required = string
+    optional = optional(string)
+    default  = optional(bool, true)
+    nested   = optional(
+      map(object({
+        a = optional(string, "foo")
+        b = optional(number, 5)
+      })), {
+        "boop": {}
+      }
+    )
   })
 }
 
@@ -12023,7 +12050,116 @@ output "out" {
 		// Because "optional" was marked as optional, it got silently filled
 		// in as a null value of string type rather than returning an error.
 		"optional": cty.NullVal(cty.String),
+
+		// Similarly, "default" was marked as optional with a default value,
+		// and since it was omitted should be filled in with that default.
+		"default": cty.True,
+
+		// Nested is a complex structure which has fully described defaults,
+		// so again it should be filled with the default structure.
+		"nested": cty.MapVal(map[string]cty.Value{
+			"boop": cty.ObjectVal(map[string]cty.Value{
+				"a": cty.StringVal("foo"),
+				"b": cty.NumberIntVal(5),
+			}),
+		}),
 	})
+	if !want.RawEquals(got) {
+		t.Fatalf("wrong result\ngot:  %#v\nwant: %#v", got, want)
+	}
+}
+
+func TestContext2Apply_moduleVariableOptionalAttributesDefault(t *testing.T) {
+	m := testModuleInline(t, map[string]string{
+		"main.tf": `
+variable "in" {
+  type    = object({
+    required = string
+    optional = optional(string)
+    default  = optional(bool, true)
+  })
+  default = {
+    required = "boop"
+  }
+}
+
+output "out" {
+  value = var.in
+}
+`})
+
+	ctx := testContext2(t, &ContextOpts{})
+
+	// We don't specify a value for the variable here, relying on its defined
+	// default.
+	plan, diags := ctx.Plan(m, states.NewState(), SimplePlanOpts(plans.NormalMode, testInputValuesUnset(m.Module.Variables)))
+	if diags.HasErrors() {
+		t.Fatal(diags.ErrWithWarnings())
+	}
+
+	state, diags := ctx.Apply(plan, m)
+	if diags.HasErrors() {
+		t.Fatal(diags.ErrWithWarnings())
+	}
+
+	got := state.RootModule().OutputValues["out"].Value
+	want := cty.ObjectVal(map[string]cty.Value{
+		"required": cty.StringVal("boop"),
+
+		// "optional" is not present in the variable default, so it is filled
+		// with null.
+		"optional": cty.NullVal(cty.String),
+
+		// Similarly, "default" is not present in the variable default, so its
+		// value is replaced with the type's specified default.
+		"default": cty.True,
+	})
+	if !want.RawEquals(got) {
+		t.Fatalf("wrong result\ngot:  %#v\nwant: %#v", got, want)
+	}
+}
+
+func TestContext2Apply_moduleVariableOptionalAttributesDefaultNull(t *testing.T) {
+	m := testModuleInline(t, map[string]string{
+		"main.tf": `
+variable "in" {
+  type    = object({
+    required = string
+    optional = optional(string)
+    default  = optional(bool, true)
+  })
+  default = null
+}
+
+# Wrap the input variable in a tuple because a null output value is elided from
+# the plan, which prevents us from testing its type.
+output "out" {
+  value = [var.in]
+}
+`})
+
+	ctx := testContext2(t, &ContextOpts{})
+
+	// We don't specify a value for the variable here, relying on its defined
+	// default.
+	plan, diags := ctx.Plan(m, states.NewState(), SimplePlanOpts(plans.NormalMode, testInputValuesUnset(m.Module.Variables)))
+	if diags.HasErrors() {
+		t.Fatal(diags.ErrWithWarnings())
+	}
+
+	state, diags := ctx.Apply(plan, m)
+	if diags.HasErrors() {
+		t.Fatal(diags.ErrWithWarnings())
+	}
+
+	got := state.RootModule().OutputValues["out"].Value
+	// The null default value should be bound, after type converting to the
+	// full object type
+	want := cty.TupleVal([]cty.Value{cty.NullVal(cty.Object(map[string]cty.Type{
+		"required": cty.String,
+		"optional": cty.String,
+		"default":  cty.Bool,
+	}))})
 	if !want.RawEquals(got) {
 		t.Fatalf("wrong result\ngot:  %#v\nwant: %#v", got, want)
 	}

@@ -21,7 +21,7 @@ type OutputTransformer struct {
 
 	// If this is a planned destroy, root outputs are still in the configuration
 	// so we need to record that we wish to remove them
-	Destroy bool
+	removeRootOutputs bool
 
 	// Refresh-only mode means that any failing output preconditions are
 	// reported as warnings rather than errors
@@ -66,13 +66,13 @@ func (t *OutputTransformer) transform(g *Graph, c *configs.Config) error {
 			}
 		}
 
-		destroy := t.Destroy
+		destroy := t.removeRootOutputs
 		if rootChange != nil {
 			destroy = rootChange.Action == plans.Delete
 		}
 
-		// If this is a root output, we add the apply or destroy node directly,
-		// as the root modules does not expand.
+		// If this is a root output and we're destroying, we add the destroy
+		// node directly, as there is no need to expand.
 
 		var node dag.Vertex
 		switch {
@@ -82,20 +82,12 @@ func (t *OutputTransformer) transform(g *Graph, c *configs.Config) error {
 				Config: o,
 			}
 
-		case c.Path.IsRoot():
-			node = &NodeApplyableOutput{
-				Addr:        addr.Absolute(addrs.RootModuleInstance),
-				Config:      o,
-				Change:      rootChange,
-				RefreshOnly: t.RefreshOnly,
-			}
-
 		default:
 			node = &nodeExpandOutput{
 				Addr:        addr,
 				Module:      c.Path,
 				Config:      o,
-				Destroy:     t.Destroy,
+				Destroy:     t.removeRootOutputs,
 				RefreshOnly: t.RefreshOnly,
 			}
 		}

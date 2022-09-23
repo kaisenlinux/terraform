@@ -22,13 +22,6 @@ func TestInit_backend(t *testing.T) {
 		{"inmem", "*inmem.Backend"},
 		{"pg", "*pg.Backend"},
 		{"s3", "*s3.Backend"},
-
-		{"azure", "init.deprecatedBackendShim"},
-		{"artifactory", "init.deprecatedBackendShim"},
-		{"etcd", "init.deprecatedBackendShim"},
-		{"etcdv3", "init.deprecatedBackendShim"},
-		{"manta", "init.deprecatedBackendShim"},
-		{"swift", "init.deprecatedBackendShim"},
 	}
 
 	// Make sure we get the requested backend

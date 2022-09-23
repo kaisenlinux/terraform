@@ -13,10 +13,13 @@ import (
 	"net/http/httptest"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"strings"
 	"syscall"
 	"testing"
+
+	"github.com/google/go-cmp/cmp"
 
 	svchost "github.com/hashicorp/terraform-svchost"
 	"github.com/hashicorp/terraform-svchost/disco"
@@ -82,7 +85,7 @@ func TestMain(m *testing.M) {
 
 // tempWorkingDir constructs a workdir.Dir object referring to a newly-created
 // temporary directory. The temporary directory is automatically removed when
-//the test and all its subtests complete.
+// the test and all its subtests complete.
 //
 // Although workdir.Dir is built to support arbitrary base directories, the
 // not-yet-migrated behaviors in command.Meta tend to expect the root module
@@ -90,8 +93,8 @@ func TestMain(m *testing.M) {
 // to use the result inside a command.Meta object you must use a pattern
 // similar to the following when initializing your test:
 //
-//     wd := tempWorkingDir(t)
-//     defer testChdir(t, wd.RootModuleDir())()
+//	wd := tempWorkingDir(t)
+//	defer testChdir(t, wd.RootModuleDir())()
 //
 // Note that testChdir modifies global state for the test process, and so a
 // test using this pattern must never call t.Parallel().
@@ -135,6 +138,9 @@ func metaOverridesForProvider(p providers.Interface) *testingOverrides {
 		Providers: map[addrs.Provider]providers.Factory{
 			addrs.NewDefaultProvider("test"):                                           providers.FactoryFixed(p),
 			addrs.NewProvider(addrs.DefaultProviderRegistryHost, "hashicorp2", "test"): providers.FactoryFixed(p),
+			addrs.NewLegacyProvider("null"):                                            providers.FactoryFixed(p),
+			addrs.NewLegacyProvider("azurerm"):                                         providers.FactoryFixed(p),
+			addrs.NewProvider(addrs.DefaultProviderRegistryHost, "acmecorp", "aws"):    providers.FactoryFixed(p),
 		},
 	}
 }
@@ -325,9 +331,9 @@ func testStateMgrCurrentLineage(mgr statemgr.Persistent) string {
 // The given mark string is returned verbatim, to allow the following pattern
 // in tests:
 //
-//     mark := markStateForMatching(state, "foo")
-//     // (do stuff to the state)
-//     assertStateHasMarker(state, mark)
+//	mark := markStateForMatching(state, "foo")
+//	// (do stuff to the state)
+//	assertStateHasMarker(state, mark)
 func markStateForMatching(state *states.State, mark string) string {
 	state.RootModule().SetOutputValue("testing_mark", cty.StringVal(mark), false)
 	return mark
@@ -702,10 +708,10 @@ func testInputMap(t *testing.T, answers map[string]string) func() {
 // When using this function, the configuration fixture for the test must
 // include an empty configuration block for the HTTP backend, like this:
 //
-// terraform {
-//   backend "http" {
-//   }
-// }
+//	terraform {
+//	  backend "http" {
+//	  }
+//	}
 //
 // If such a block isn't present, or if it isn't empty, then an error will
 // be returned about the backend configuration having changed and that
@@ -1051,4 +1057,93 @@ func fakeRegistryHandler(resp http.ResponseWriter, req *http.Request) {
 func testView(t *testing.T) (*views.View, func(*testing.T) *terminal.TestOutput) {
 	streams, done := terminal.StreamsForTesting(t)
 	return views.NewView(streams), done
+}
+
+// checkGoldenReference compares the given test output with a known "golden" output log
+// located under the specified fixture path.
+//
+// If any of these tests fail, please communicate with Terraform Cloud folks before resolving,
+// as changes to UI output may also affect the behavior of Terraform Cloud's structured run output.
+func checkGoldenReference(t *testing.T, output *terminal.TestOutput, fixturePathName string) {
+	t.Helper()
+
+	// Load the golden reference fixture
+	wantFile, err := os.Open(path.Join(testFixturePath(fixturePathName), "output.jsonlog"))
+	if err != nil {
+		t.Fatalf("failed to open output file: %s", err)
+	}
+	defer wantFile.Close()
+	wantBytes, err := ioutil.ReadAll(wantFile)
+	if err != nil {
+		t.Fatalf("failed to read output file: %s", err)
+	}
+	want := string(wantBytes)
+
+	got := output.Stdout()
+
+	// Split the output and the reference into lines so that we can compare
+	// messages
+	got = strings.TrimSuffix(got, "\n")
+	gotLines := strings.Split(got, "\n")
+
+	want = strings.TrimSuffix(want, "\n")
+	wantLines := strings.Split(want, "\n")
+
+	if len(gotLines) != len(wantLines) {
+		t.Errorf("unexpected number of log lines: got %d, want %d\n"+
+			"NOTE: This failure may indicate a UI change affecting the behavior of structured run output on TFC.\n"+
+			"Please communicate with Terraform Cloud team before resolving", len(gotLines), len(wantLines))
+	}
+
+	// Verify that the log starts with a version message
+	type versionMessage struct {
+		Level     string `json:"@level"`
+		Message   string `json:"@message"`
+		Type      string `json:"type"`
+		Terraform string `json:"terraform"`
+		UI        string `json:"ui"`
+	}
+	var gotVersion versionMessage
+	if err := json.Unmarshal([]byte(gotLines[0]), &gotVersion); err != nil {
+		t.Errorf("failed to unmarshal version line: %s\n%s", err, gotLines[0])
+	}
+	wantVersion := versionMessage{
+		"info",
+		fmt.Sprintf("Terraform %s", version.String()),
+		"version",
+		version.String(),
+		views.JSON_UI_VERSION,
+	}
+	if !cmp.Equal(wantVersion, gotVersion) {
+		t.Errorf("unexpected first message:\n%s", cmp.Diff(wantVersion, gotVersion))
+	}
+
+	// Compare the rest of the lines against the golden reference
+	var gotLineMaps []map[string]interface{}
+	for i, line := range gotLines[1:] {
+		index := i + 1
+		var gotMap map[string]interface{}
+		if err := json.Unmarshal([]byte(line), &gotMap); err != nil {
+			t.Errorf("failed to unmarshal got line %d: %s\n%s", index, err, gotLines[index])
+		}
+		if _, ok := gotMap["@timestamp"]; !ok {
+			t.Errorf("missing @timestamp field in log: %s", gotLines[index])
+		}
+		delete(gotMap, "@timestamp")
+		gotLineMaps = append(gotLineMaps, gotMap)
+	}
+	var wantLineMaps []map[string]interface{}
+	for i, line := range wantLines[1:] {
+		index := i + 1
+		var wantMap map[string]interface{}
+		if err := json.Unmarshal([]byte(line), &wantMap); err != nil {
+			t.Errorf("failed to unmarshal want line %d: %s\n%s", index, err, gotLines[index])
+		}
+		wantLineMaps = append(wantLineMaps, wantMap)
+	}
+	if diff := cmp.Diff(wantLineMaps, gotLineMaps); diff != "" {
+		t.Errorf("wrong output lines\n%s\n"+
+			"NOTE: This failure may indicate a UI change affecting the behavior of structured run output on TFC.\n"+
+			"Please communicate with Terraform Cloud team before resolving", diff)
+	}
 }

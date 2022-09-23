@@ -10,6 +10,7 @@ import (
 	"github.com/google/go-cmp/cmp"
 	"github.com/hashicorp/hcl/v2"
 	"github.com/hashicorp/hcl/v2/hclsyntax"
+
 	"github.com/hashicorp/terraform/internal/addrs"
 	"github.com/hashicorp/terraform/internal/states"
 )
@@ -28,10 +29,7 @@ func TestApplyMoves(t *testing.T) {
 		return addr
 	}
 
-	emptyResults := MoveResults{
-		Changes: map[addrs.UniqueKey]MoveSuccess{},
-		Blocked: map[addrs.UniqueKey]MoveBlocked{},
-	}
+	emptyResults := makeMoveResults()
 
 	tests := map[string]struct {
 		Stmts []MoveStatement
@@ -78,13 +76,13 @@ func TestApplyMoves(t *testing.T) {
 				)
 			}),
 			MoveResults{
-				Changes: map[addrs.UniqueKey]MoveSuccess{
-					mustParseInstAddr("foo.to").UniqueKey(): {
+				Changes: addrs.MakeMap(
+					addrs.MakeMapElem(mustParseInstAddr("foo.to"), MoveSuccess{
 						From: mustParseInstAddr("foo.from"),
 						To:   mustParseInstAddr("foo.to"),
-					},
-				},
-				Blocked: map[addrs.UniqueKey]MoveBlocked{},
+					}),
+				),
+				Blocked: emptyResults.Blocked,
 			},
 			[]string{
 				`foo.to`,
@@ -105,13 +103,13 @@ func TestApplyMoves(t *testing.T) {
 				)
 			}),
 			MoveResults{
-				Changes: map[addrs.UniqueKey]MoveSuccess{
-					mustParseInstAddr("foo.to[0]").UniqueKey(): {
+				Changes: addrs.MakeMap(
+					addrs.MakeMapElem(mustParseInstAddr("foo.to[0]"), MoveSuccess{
 						From: mustParseInstAddr("foo.from[0]"),
 						To:   mustParseInstAddr("foo.to[0]"),
-					},
-				},
-				Blocked: map[addrs.UniqueKey]MoveBlocked{},
+					}),
+				),
+				Blocked: emptyResults.Blocked,
 			},
 			[]string{
 				`foo.to[0]`,
@@ -133,13 +131,13 @@ func TestApplyMoves(t *testing.T) {
 				)
 			}),
 			MoveResults{
-				Changes: map[addrs.UniqueKey]MoveSuccess{
-					mustParseInstAddr("foo.to").UniqueKey(): {
+				Changes: addrs.MakeMap(
+					addrs.MakeMapElem(mustParseInstAddr("foo.to"), MoveSuccess{
 						From: mustParseInstAddr("foo.from"),
 						To:   mustParseInstAddr("foo.to"),
-					},
-				},
-				Blocked: map[addrs.UniqueKey]MoveBlocked{},
+					}),
+				),
+				Blocked: emptyResults.Blocked,
 			},
 			[]string{
 				`foo.to`,
@@ -161,13 +159,13 @@ func TestApplyMoves(t *testing.T) {
 				)
 			}),
 			MoveResults{
-				Changes: map[addrs.UniqueKey]MoveSuccess{
-					mustParseInstAddr("module.boo.foo.to[0]").UniqueKey(): {
+				Changes: addrs.MakeMap(
+					addrs.MakeMapElem(mustParseInstAddr("module.boo.foo.to[0]"), MoveSuccess{
 						From: mustParseInstAddr("foo.from[0]"),
 						To:   mustParseInstAddr("module.boo.foo.to[0]"),
-					},
-				},
-				Blocked: map[addrs.UniqueKey]MoveBlocked{},
+					}),
+				),
+				Blocked: emptyResults.Blocked,
 			},
 			[]string{
 				`module.boo.foo.to[0]`,
@@ -189,13 +187,13 @@ func TestApplyMoves(t *testing.T) {
 				)
 			}),
 			MoveResults{
-				Changes: map[addrs.UniqueKey]MoveSuccess{
-					mustParseInstAddr("module.bar[0].foo.to[0]").UniqueKey(): {
+				Changes: addrs.MakeMap(
+					addrs.MakeMapElem(mustParseInstAddr("module.bar[0].foo.to[0]"), MoveSuccess{
 						From: mustParseInstAddr("module.boo.foo.from[0]"),
 						To:   mustParseInstAddr("module.bar[0].foo.to[0]"),
-					},
-				},
-				Blocked: map[addrs.UniqueKey]MoveBlocked{},
+					}),
+				),
+				Blocked: emptyResults.Blocked,
 			},
 			[]string{
 				`module.bar[0].foo.to[0]`,
@@ -225,17 +223,17 @@ func TestApplyMoves(t *testing.T) {
 				)
 			}),
 			MoveResults{
-				Changes: map[addrs.UniqueKey]MoveSuccess{
-					mustParseInstAddr("module.bar.foo.from").UniqueKey(): {
+				Changes: addrs.MakeMap(
+					addrs.MakeMapElem(mustParseInstAddr("module.bar.foo.from"), MoveSuccess{
 						From: mustParseInstAddr("module.boo.foo.from"),
 						To:   mustParseInstAddr("module.bar.foo.from"),
-					},
-					mustParseInstAddr("module.bar.module.hoo.foo.from").UniqueKey(): {
+					}),
+					addrs.MakeMapElem(mustParseInstAddr("module.bar.module.hoo.foo.from"), MoveSuccess{
 						From: mustParseInstAddr("module.boo.module.hoo.foo.from"),
 						To:   mustParseInstAddr("module.bar.module.hoo.foo.from"),
-					},
-				},
-				Blocked: map[addrs.UniqueKey]MoveBlocked{},
+					}),
+				),
+				Blocked: emptyResults.Blocked,
 			},
 			[]string{
 				`module.bar.foo.from`,
@@ -258,13 +256,13 @@ func TestApplyMoves(t *testing.T) {
 				)
 			}),
 			MoveResults{
-				Changes: map[addrs.UniqueKey]MoveSuccess{
-					mustParseInstAddr("module.bar[0].foo.from[0]").UniqueKey(): {
+				Changes: addrs.MakeMap(
+					addrs.MakeMapElem(mustParseInstAddr("module.bar[0].foo.from[0]"), MoveSuccess{
 						From: mustParseInstAddr("module.boo.foo.from[0]"),
 						To:   mustParseInstAddr("module.bar[0].foo.from[0]"),
-					},
-				},
-				Blocked: map[addrs.UniqueKey]MoveBlocked{},
+					}),
+				),
+				Blocked: emptyResults.Blocked,
 			},
 			[]string{
 				`module.bar[0].foo.from[0]`,
@@ -287,13 +285,13 @@ func TestApplyMoves(t *testing.T) {
 				)
 			}),
 			MoveResults{
-				Changes: map[addrs.UniqueKey]MoveSuccess{
-					mustParseInstAddr("module.bar[0].foo.to[0]").UniqueKey(): {
+				Changes: addrs.MakeMap(
+					addrs.MakeMapElem(mustParseInstAddr("module.bar[0].foo.to[0]"), MoveSuccess{
 						From: mustParseInstAddr("module.boo.foo.from[0]"),
 						To:   mustParseInstAddr("module.bar[0].foo.to[0]"),
-					},
-				},
-				Blocked: map[addrs.UniqueKey]MoveBlocked{},
+					}),
+				),
+				Blocked: emptyResults.Blocked,
 			},
 			[]string{
 				`module.bar[0].foo.to[0]`,
@@ -316,13 +314,13 @@ func TestApplyMoves(t *testing.T) {
 				)
 			}),
 			MoveResults{
-				Changes: map[addrs.UniqueKey]MoveSuccess{
-					mustParseInstAddr("module.bar[0].foo.to[0]").UniqueKey(): {
+				Changes: addrs.MakeMap(
+					addrs.MakeMapElem(mustParseInstAddr("module.bar[0].foo.to[0]"), MoveSuccess{
 						From: mustParseInstAddr("module.boo.foo.from[0]"),
 						To:   mustParseInstAddr("module.bar[0].foo.to[0]"),
-					},
-				},
-				Blocked: map[addrs.UniqueKey]MoveBlocked{},
+					}),
+				),
+				Blocked: emptyResults.Blocked,
 			},
 			[]string{
 				`module.bar[0].foo.to[0]`,
@@ -354,13 +352,16 @@ func TestApplyMoves(t *testing.T) {
 			MoveResults{
 				// Nothing moved, because the module.b address is already
 				// occupied by another module.
-				Changes: map[addrs.UniqueKey]MoveSuccess{},
-				Blocked: map[addrs.UniqueKey]MoveBlocked{
-					mustParseInstAddr("module.bar[0].foo.from").Module.UniqueKey(): {
-						Wanted: mustParseInstAddr("module.boo.foo.to[0]").Module,
-						Actual: mustParseInstAddr("module.bar[0].foo.from").Module,
-					},
-				},
+				Changes: emptyResults.Changes,
+				Blocked: addrs.MakeMap(
+					addrs.MakeMapElem[addrs.AbsMoveable](
+						mustParseInstAddr("module.bar[0].foo.from").Module,
+						MoveBlocked{
+							Wanted: mustParseInstAddr("module.boo.foo.to[0]").Module,
+							Actual: mustParseInstAddr("module.bar[0].foo.from").Module,
+						},
+					),
+				),
 			},
 			[]string{
 				`module.bar[0].foo.from`,
@@ -393,13 +394,16 @@ func TestApplyMoves(t *testing.T) {
 			MoveResults{
 				// Nothing moved, because the from.to address is already
 				// occupied by another resource.
-				Changes: map[addrs.UniqueKey]MoveSuccess{},
-				Blocked: map[addrs.UniqueKey]MoveBlocked{
-					mustParseInstAddr("foo.from").ContainingResource().UniqueKey(): {
-						Wanted: mustParseInstAddr("foo.to").ContainingResource(),
-						Actual: mustParseInstAddr("foo.from").ContainingResource(),
-					},
-				},
+				Changes: emptyResults.Changes,
+				Blocked: addrs.MakeMap(
+					addrs.MakeMapElem[addrs.AbsMoveable](
+						mustParseInstAddr("foo.from").ContainingResource(),
+						MoveBlocked{
+							Wanted: mustParseInstAddr("foo.to").ContainingResource(),
+							Actual: mustParseInstAddr("foo.from").ContainingResource(),
+						},
+					),
+				),
 			},
 			[]string{
 				`foo.from`,
@@ -432,13 +436,16 @@ func TestApplyMoves(t *testing.T) {
 			MoveResults{
 				// Nothing moved, because the from.to[0] address is already
 				// occupied by another resource instance.
-				Changes: map[addrs.UniqueKey]MoveSuccess{},
-				Blocked: map[addrs.UniqueKey]MoveBlocked{
-					mustParseInstAddr("foo.from").UniqueKey(): {
-						Wanted: mustParseInstAddr("foo.to[0]"),
-						Actual: mustParseInstAddr("foo.from"),
-					},
-				},
+				Changes: emptyResults.Changes,
+				Blocked: addrs.MakeMap(
+					addrs.MakeMapElem[addrs.AbsMoveable](
+						mustParseInstAddr("foo.from"),
+						MoveBlocked{
+							Wanted: mustParseInstAddr("foo.to[0]"),
+							Actual: mustParseInstAddr("foo.from"),
+						},
+					),
+				),
 			},
 			[]string{
 				`foo.from`,
@@ -461,13 +468,13 @@ func TestApplyMoves(t *testing.T) {
 				)
 			}),
 			MoveResults{
-				Changes: map[addrs.UniqueKey]MoveSuccess{
-					mustParseInstAddr("module.bar[0].foo.to").UniqueKey(): {
+				Changes: addrs.MakeMap(
+					addrs.MakeMapElem(mustParseInstAddr("module.bar[0].foo.to"), MoveSuccess{
 						From: mustParseInstAddr("module.boo.foo.from"),
 						To:   mustParseInstAddr("module.bar[0].foo.to"),
-					},
-				},
-				Blocked: map[addrs.UniqueKey]MoveBlocked{},
+					}),
+				),
+				Blocked: emptyResults.Blocked,
 			},
 			[]string{
 				`module.bar[0].foo.to`,
@@ -498,17 +505,17 @@ func TestApplyMoves(t *testing.T) {
 				)
 			}),
 			MoveResults{
-				Changes: map[addrs.UniqueKey]MoveSuccess{
-					mustParseInstAddr("module.boo.foo.from").UniqueKey(): {
+				Changes: addrs.MakeMap(
+					addrs.MakeMapElem(mustParseInstAddr("module.boo.foo.from"), MoveSuccess{
 						mustParseInstAddr("foo.from"),
 						mustParseInstAddr("module.boo.foo.from"),
-					},
-					mustParseInstAddr("module.boo.foo.to").UniqueKey(): {
+					}),
+					addrs.MakeMapElem(mustParseInstAddr("module.boo.foo.to"), MoveSuccess{
 						mustParseInstAddr("module.bar[0].foo.to"),
 						mustParseInstAddr("module.boo.foo.to"),
-					},
-				},
-				Blocked: map[addrs.UniqueKey]MoveBlocked{},
+					}),
+				),
+				Blocked: emptyResults.Blocked,
 			},
 			[]string{
 				`module.boo.foo.from`,
@@ -541,16 +548,16 @@ func TestApplyMoves(t *testing.T) {
 				)
 			}),
 			MoveResults{
-				Changes: map[addrs.UniqueKey]MoveSuccess{
-					mustParseInstAddr("module.bar[0].foo.to").UniqueKey(): MoveSuccess{
+				Changes: addrs.MakeMap(
+					addrs.MakeMapElem(mustParseInstAddr("module.bar[0].foo.to"), MoveSuccess{
 						mustParseInstAddr("foo.from"),
 						mustParseInstAddr("module.bar[0].foo.to"),
-					},
-					mustParseInstAddr("module.bar[0].bar.to").UniqueKey(): MoveSuccess{
+					}),
+					addrs.MakeMapElem(mustParseInstAddr("module.bar[0].bar.to"), MoveSuccess{
 						mustParseInstAddr("bar.from"),
 						mustParseInstAddr("module.bar[0].bar.to"),
-					},
-				},
+					}),
+				),
 				Blocked: emptyResults.Blocked,
 			},
 			[]string{
@@ -583,19 +590,21 @@ func TestApplyMoves(t *testing.T) {
 				)
 			}),
 			MoveResults{
-				Changes: map[addrs.UniqueKey]MoveSuccess{
-
-					mustParseInstAddr("module.boo.foo.from").UniqueKey(): {
+				Changes: addrs.MakeMap(
+					addrs.MakeMapElem(mustParseInstAddr("module.boo.foo.from"), MoveSuccess{
 						mustParseInstAddr("module.bar[0].foo.from"),
 						mustParseInstAddr("module.boo.foo.from"),
-					},
-				},
-				Blocked: map[addrs.UniqueKey]MoveBlocked{
-					mustParseInstAddr("foo.from").ContainingResource().UniqueKey(): {
-						Actual: mustParseInstAddr("foo.from").ContainingResource(),
-						Wanted: mustParseInstAddr("module.boo.foo.from").ContainingResource(),
-					},
-				},
+					}),
+				),
+				Blocked: addrs.MakeMap(
+					addrs.MakeMapElem[addrs.AbsMoveable](
+						mustParseInstAddr("foo.from").ContainingResource(),
+						MoveBlocked{
+							Actual: mustParseInstAddr("foo.from").ContainingResource(),
+							Wanted: mustParseInstAddr("module.boo.foo.from").ContainingResource(),
+						},
+					),
+				),
 			},
 			[]string{
 				`foo.from`,

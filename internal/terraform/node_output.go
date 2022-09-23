@@ -5,6 +5,8 @@ import (
 	"log"
 
 	"github.com/hashicorp/hcl/v2"
+	"github.com/zclconf/go-cty/cty"
+
 	"github.com/hashicorp/terraform/internal/addrs"
 	"github.com/hashicorp/terraform/internal/configs"
 	"github.com/hashicorp/terraform/internal/dag"
@@ -13,7 +15,6 @@ import (
 	"github.com/hashicorp/terraform/internal/plans"
 	"github.com/hashicorp/terraform/internal/states"
 	"github.com/hashicorp/terraform/internal/tfdiags"
-	"github.com/zclconf/go-cty/cty"
 )
 
 // nodeExpandOutput is the placeholder for a non-root module output that has
@@ -53,14 +54,33 @@ func (n *nodeExpandOutput) DynamicExpand(ctx EvalContext) (*Graph, error) {
 	expander := ctx.InstanceExpander()
 	changes := ctx.Changes()
 
+	// If this is an output value that participates in custom condition checks
+	// (i.e. it has preconditions or postconditions) then the check state
+	// wants to know the addresses of the checkable objects so that it can
+	// treat them as unknown status if we encounter an error before actually
+	// visiting the checks.
+	var checkableAddrs addrs.Set[addrs.Checkable]
+	if checkState := ctx.Checks(); checkState.ConfigHasChecks(n.Addr.InModule(n.Module)) {
+		checkableAddrs = addrs.MakeSet[addrs.Checkable]()
+	}
+
 	var g Graph
 	for _, module := range expander.ExpandModule(n.Module) {
 		absAddr := n.Addr.Absolute(module)
+		if checkableAddrs != nil {
+			checkableAddrs.Add(absAddr)
+		}
 
 		// Find any recorded change for this output
 		var change *plans.OutputChangeSrc
-		parent, call := module.Call()
-		for _, c := range changes.GetOutputChanges(parent, call) {
+		var outputChanges []*plans.OutputChangeSrc
+		if module.IsRoot() {
+			outputChanges = changes.GetRootOutputChanges()
+		} else {
+			parent, call := module.Call()
+			outputChanges = changes.GetOutputChanges(parent, call)
+		}
+		for _, c := range outputChanges {
 			if c.Addr.String() == absAddr.String() {
 				change = c
 				break
@@ -76,6 +96,12 @@ func (n *nodeExpandOutput) DynamicExpand(ctx EvalContext) (*Graph, error) {
 		log.Printf("[TRACE] Expanding output: adding %s as %T", o.Addr.String(), o)
 		g.Add(o)
 	}
+
+	if checkableAddrs != nil {
+		checkState := ctx.Checks()
+		checkState.ReportCheckableObjects(n.Addr.InModule(n.Module), checkableAddrs)
+	}
+
 	return &g, nil
 }
 
@@ -413,12 +439,14 @@ func (n *NodeDestroyableOutput) Execute(ctx EvalContext, op walkOperation) tfdia
 	before := cty.NullVal(cty.DynamicPseudoType)
 	mod := state.Module(n.Addr.Module)
 	if n.Addr.Module.IsRoot() && mod != nil {
-		for name, o := range mod.OutputValues {
-			if name == n.Addr.OutputValue.Name {
-				sensitiveBefore = o.Sensitive
-				before = o.Value
-				break
-			}
+		if o, ok := mod.OutputValues[n.Addr.OutputValue.Name]; ok {
+			sensitiveBefore = o.Sensitive
+			before = o.Value
+		} else {
+			// If the output was not in state, a delete change would
+			// be meaningless, so exit early.
+			return nil
+
 		}
 	}
 

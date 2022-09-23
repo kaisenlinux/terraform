@@ -1,9 +1,10 @@
 package plans
 
 import (
+	"github.com/zclconf/go-cty/cty"
+
 	"github.com/hashicorp/terraform/internal/addrs"
 	"github.com/hashicorp/terraform/internal/states"
-	"github.com/zclconf/go-cty/cty"
 )
 
 // Changes describes various actions that Terraform will attempt to take if
@@ -105,7 +106,8 @@ func (c *Changes) ResourceInstanceDeposed(addr addrs.AbsResourceInstance, key st
 }
 
 // OutputValue returns the planned change for the output value with the
-//  given address, if any. Returns nil if no change is planned.
+//
+//	given address, if any. Returns nil if no change is planned.
 func (c *Changes) OutputValue(addr addrs.AbsOutputValue) *OutputChangeSrc {
 	for _, oc := range c.Outputs {
 		if oc.Addr.Equal(addr) {
@@ -114,6 +116,23 @@ func (c *Changes) OutputValue(addr addrs.AbsOutputValue) *OutputChangeSrc {
 	}
 
 	return nil
+}
+
+// RootOutputValues returns planned changes for all outputs of the root module.
+func (c *Changes) RootOutputValues() []*OutputChangeSrc {
+	var res []*OutputChangeSrc
+
+	for _, oc := range c.Outputs {
+		// we can't evaluate root module outputs
+		if !oc.Addr.Module.Equal(addrs.RootModuleInstance) {
+			continue
+		}
+
+		res = append(res, oc)
+
+	}
+
+	return res
 }
 
 // OutputValues returns planned changes for all outputs for all module
@@ -261,12 +280,12 @@ func (rc *ResourceInstanceChange) Moved() bool {
 //
 // The following table shows the simplification behavior:
 //
-//     Action    Destroying?   New Action
-//     --------+-------------+-----------
-//     Create    true          NoOp
-//     Delete    false         NoOp
-//     Replace   true          Delete
-//     Replace   false         Create
+//	Action    Destroying?   New Action
+//	--------+-------------+-----------
+//	Create    true          NoOp
+//	Delete    false         NoOp
+//	Replace   true          Delete
+//	Replace   false         Create
 //
 // For any combination not in the above table, the Simplify just returns the
 // receiver as-is.
@@ -407,6 +426,12 @@ const (
 	// potentially multiple nested modules could all contribute conflicting
 	// specific reasons for a particular instance to no longer be declared.
 	ResourceInstanceDeleteBecauseNoModule ResourceInstanceChangeActionReason = 'M'
+
+	// ResourceInstanceDeleteBecauseNoMoveTarget indicates that the resource
+	// address appears as the target ("to") in a moved block, but no
+	// configuration exists for that resource. According to our move rules,
+	// this combination evaluates to a deletion of the "new" resource.
+	ResourceInstanceDeleteBecauseNoMoveTarget ResourceInstanceChangeActionReason = 'A'
 
 	// ResourceInstanceReadBecauseConfigUnknown indicates that the resource
 	// must be read during apply (rather than during planning) because its

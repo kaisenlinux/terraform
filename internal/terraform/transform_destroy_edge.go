@@ -4,9 +4,6 @@ import (
 	"log"
 
 	"github.com/hashicorp/terraform/internal/addrs"
-	"github.com/hashicorp/terraform/internal/states"
-
-	"github.com/hashicorp/terraform/internal/configs"
 	"github.com/hashicorp/terraform/internal/dag"
 )
 
@@ -33,19 +30,14 @@ type GraphNodeCreator interface {
 //
 // That is complicated. Visually:
 //
-//   B_d -> A_d -> A -> B
+//	B_d -> A_d -> A -> B
 //
 // Notice that A destroy depends on B destroy, while B create depends on
 // A create. They're inverted. This must be done for example because often
 // dependent resources will block parent resources from deleting. Concrete
 // example: VPC with subnets, the VPC can't be deleted while there are
 // still subnets.
-type DestroyEdgeTransformer struct {
-	// These are needed to properly build the graph of dependencies
-	// to determine what a destroy node depends on. Any of these can be nil.
-	Config *configs.Config
-	State  *states.State
-}
+type DestroyEdgeTransformer struct{}
 
 func (t *DestroyEdgeTransformer) Transform(g *Graph) error {
 	// Build a map of what is being destroyed (by address string) to
@@ -89,7 +81,7 @@ func (t *DestroyEdgeTransformer) Transform(g *Graph) error {
 		return nil
 	}
 
-	// Connect destroy despendencies as stored in the state
+	// Connect destroy dependencies as stored in the state
 	for _, ds := range destroyers {
 		for _, des := range ds {
 			ri, ok := des.(GraphNodeResourceInstance)
@@ -220,6 +212,16 @@ func (t *pruneUnusedNodesTransformer) Transform(g *Graph) error {
 					for _, v := range g.UpEdges(n) {
 						switch v.(type) {
 						case graphNodeExpandsInstances:
+							// Root module output values (which the following
+							// condition matches) are exempt because we know
+							// there is only ever exactly one instance of the
+							// root module, and so it's not actually important
+							// to expand it and so this lets us do a bit more
+							// pruning than we'd be able to do otherwise.
+							if tmp, ok := v.(graphNodeTemporaryValue); ok && !tmp.temporaryValue() {
+								continue
+							}
+
 							// expanders can always depend on module expansion
 							// themselves
 							return
