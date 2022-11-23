@@ -3,7 +3,7 @@ Section: admin
 Priority: optional
 Maintainer: Kevin Chevreuil - Kaisen <kaisen@kaisenlinux.org>
 Build-Depends: debhelper-compat (= 13),
-	       golang-go (>= 1.17),
+	       golang-go (>= 1.18),
 	       dh-golang,
 Standards-Version: 4.6.0
 Homepage: https://www.terraform.io/
@@ -15,7 +15,7 @@ Package: terraform
 Architecture: amd64 arm64 i386
 Depends: ${shlibs:Depends},
 	 ${misc:Depends},
-	 golang-go (>= 1.17),
+	 golang-go (>= 1.18),
 Suggests: tfsec
 Description: Infrastructure as code tool to manage cloud environments
  Terraform enables you to safely and predictably create, change, and improve infrastructure. It is an open source tool that codifies APIs into declarative configuration files that can be shared amongst team members, treated as code, edited, reviewed, and versioned.

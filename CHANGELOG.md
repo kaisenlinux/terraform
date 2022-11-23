@@ -1,3 +1,64 @@
+## 1.3.5 (November 17, 2022)
+
+BUG FIXES:
+
+* Prevent crash while serializing the plan for an empty destroy operation ([#32207](https://github.com/hashicorp/terraform/issues/32207))
+* Allow a destroy plan to refresh instances while taking into account that some may no longer exist ([#32208](https://github.com/hashicorp/terraform/issues/32208))
+* Fix Terraform creating objects that should not exist in variables that specify default attributes in optional objects. ([#32178](https://github.com/hashicorp/terraform/issues/32178))
+* Fix several Terraform crashes that are caused by HCL creating objects that should not exist in variables that specify default attributes in optional objects within collections. ([#32178](https://github.com/hashicorp/terraform/issues/32178))
+* Fix inconsistent behaviour in empty vs null collections. ([#32178](https://github.com/hashicorp/terraform/issues/32178))
+* Prevent file uploads from creating unneeded temporary files when the payload size is known ([#32206](https://github.com/hashicorp/terraform/issues/32206))
+* Nested attributes marked sensitive by schema no longer reveal sub-attributes in the plan diff ([#32004](https://github.com/hashicorp/terraform/issues/32004))
+* Nested attributes now more consistently display when they become unknown or null values in the plan diff ([#32004](https://github.com/hashicorp/terraform/issues/32004))
+* Sensitive values are now always displayed as `(sensitive value)` instead of sometimes as `(sensitive)` [GH32004]
+
+
+## 1.3.4 (November 02, 2022)
+
+BUG FIXES:
+
+* Fix invalid refresh-only plan caused by data sources being deferred to apply ([#32111](https://github.com/hashicorp/terraform/issues/32111))
+* Optimize the handling of condition checks during apply to prevent performance regressions with large numbers of instances ([#32123](https://github.com/hashicorp/terraform/issues/32123))
+* Output preconditions should not be evaluated during destroy ([#32051](https://github.com/hashicorp/terraform/issues/32051))
+* Fix crash from `console` when outputs contain preconditions ([#32051](https://github.com/hashicorp/terraform/issues/32051))
+* Destroy with no state would still attempt to evaluate some values ([#32051](https://github.com/hashicorp/terraform/issues/32051))
+* Prevent unnecessary evaluation and planning of resources during the pre-destroy refresh ([#32051](https://github.com/hashicorp/terraform/issues/32051))
+* AzureRM Backend: support for generic OIDC authentication via the `oidc_token` and `oidc_token_file_path` properties ([#31966](https://github.com/hashicorp/terraform/issues/31966))
+* Input and Module Variables: Convert variable types before attempting to apply default values. ([#32027](https://github.com/hashicorp/terraform/issues/32027))
+* When installing remote module packages delivered in tar format, Terraform now limits the tar header block size to 1MiB to avoid unbounded memory usage for maliciously-crafted module packages. ([#32135](https://github.com/hashicorp/terraform/issues/32135))
+* Terraform will now reject excessively-complex regular expression patterns passed to the `regex`, `regexall`, and `replace` functions, to avoid unbounded memory usage for maliciously-crafted patterns. This change should not affect any reasonable patterns intended for practical use. ([#32135](https://github.com/hashicorp/terraform/issues/32135))
+* Terraform on Windows now rejects invalid environment variables whose values contain the NUL character when propagating environment variables to a child process such as a provider plugin. Previously Terraform would incorrectly treat that character as a separator between two separate environment variables. ([#32135](https://github.com/hashicorp/terraform/issues/32135))
+
+## 1.3.3 (October 19, 2022)
+
+BUG FIXES:
+
+* Fix error when removing a resource from configuration which according to the provider has already been deleted. ([#31850](https://github.com/hashicorp/terraform/issues/31850))
+* Fix error when setting empty collections into variables with collections of nested objects with default values. ([#32033](https://github.com/hashicorp/terraform/issues/32033))
+
+## 1.3.2 (October 06, 2022)
+
+BUG FIXES:
+
+* Fixed a crash caused by Terraform incorrectly re-registering output value preconditions during the apply phase (rather than just reusing the already-planned checks from the plan phase). ([#31890](https://github.com/hashicorp/terraform/issues/31890))
+* Prevent errors when the provider reports that a deposed instance no longer exists ([#31902](https://github.com/hashicorp/terraform/issues/31902))
+* Using `ignore_changes = all` could cause persistent diffs with legacy providers ([#31914](https://github.com/hashicorp/terraform/issues/31914))
+* Fix cycles when resource dependencies cross over between independent provider configurations ([#31917](https://github.com/hashicorp/terraform/issues/31917))
+* Improve handling of missing resource instances during `import` ([#31878](https://github.com/hashicorp/terraform/issues/31878))
+
+## 1.3.1 (September 28, 2022)
+
+NOTE:
+* On `darwin/amd64` and `darwin/arm64` architectures, `terraform` binaries are now built with CGO enabled. This should not have any user-facing impact, except in cases where the pure Go DNS resolver causes problems on recent versions of macOS: using CGO may mitigate these issues. Please see the upstream bug https://github.com/golang/go/issues/52839 for more details.
+
+BUG FIXES:
+
+* Fixed a crash when using objects with optional attributes and default values in collections, most visible with nested modules. ([#31847](https://github.com/hashicorp/terraform/issues/31847))
+* Prevent cycles in some situations where a provider depends on resources in the configuration which are participating in planned changes. ([#31857](https://github.com/hashicorp/terraform/issues/31857))
+* Fixed an error when attempting to destroy a configuration where resources do not exist in the state. ([#31858](https://github.com/hashicorp/terraform/issues/31858))
+* Data sources which cannot be read during will no longer prevent the state from being serialized. ([#31871](https://github.com/hashicorp/terraform/issues/31871))
+* Fixed a crash which occured when a resource with a precondition and/or a postcondition appeared inside a module with two or more instances. ([#31860](https://github.com/hashicorp/terraform/issues/31860))
+
 ## 1.3.0 (September 21, 2022)
 
 NEW FEATURES:
@@ -38,7 +99,7 @@ ENHANCEMENTS:
 * config: When reporting an error message related to a function call, Terraform will now include contextual information about the signature of the function that was being called, as an aid to understanding why the call might have failed. ([#31299](https://github.com/hashicorp/terraform/issues/31299))
 * config: When reporting an error or warning message that isn't caused by values being unknown or marked as sensitive, Terraform will no longer mention any values having those characteristics in the contextual information presented alongside the error. Terraform will still return this information for the small subset of error messages that are specifically about unknown values or sensitive values being invalid in certain contexts. ([#31299](https://github.com/hashicorp/terraform/issues/31299))
 * config: `moved` blocks can now describe resources moving to and from modules in separate module packages. ([#31556](https://github.com/hashicorp/terraform/issues/31556))
-* `terraform fmt` now accepts multiple target paths, allowing formatting of several individual files at once. ([#31687](https://github.com/hashicorp/terraform/issues/31687))
+* `terraform fmt` now accepts multiple target paths, allowing formatting of several individual files at once. ([#28191](https://github.com/hashicorp/terraform/issues/28191))
 * `terraform init`: provider installation errors now mention which host Terraform was downloading from ([#31524](https://github.com/hashicorp/terraform/issues/31524))
 * CLI: Terraform will report more explicitly when it is proposing to delete an object due to it having moved to a resource instance that is not currently declared in the configuration. ([#31695](https://github.com/hashicorp/terraform/issues/31695))
 * CLI: When showing the progress of a remote operation running in Terraform Cloud, Terraform CLI will include information about pre-plan run tasks ([#31617](https://github.com/hashicorp/terraform/issues/31617))
