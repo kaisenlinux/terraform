@@ -1,3 +1,10 @@
+## 1.3.6 (November 30, 2022)
+
+BUG FIXES:
+
+* Terraform could crash if an orphaned resource instance was deleted externally and had condition checks in the configuration ([#32246](https://github.com/hashicorp/terraform/issues/32246))
+* Module output changes were being removed and re-added to the stored plan, impacting performance with large numbers of outputs ([#32307](https://github.com/hashicorp/terraform/issues/32307))
+
 ## 1.3.5 (November 17, 2022)
 
 BUG FIXES:
@@ -10,7 +17,7 @@ BUG FIXES:
 * Prevent file uploads from creating unneeded temporary files when the payload size is known ([#32206](https://github.com/hashicorp/terraform/issues/32206))
 * Nested attributes marked sensitive by schema no longer reveal sub-attributes in the plan diff ([#32004](https://github.com/hashicorp/terraform/issues/32004))
 * Nested attributes now more consistently display when they become unknown or null values in the plan diff ([#32004](https://github.com/hashicorp/terraform/issues/32004))
-* Sensitive values are now always displayed as `(sensitive value)` instead of sometimes as `(sensitive)` [GH32004]
+* Sensitive values are now always displayed as `(sensitive value)` instead of sometimes as `(sensitive)` ([#32004](https://github.com/hashicorp/terraform/issues/32004))
 
 
 ## 1.3.4 (November 02, 2022)
