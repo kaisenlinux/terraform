@@ -92,19 +92,13 @@ func (s *State) WriteStateForMigration(f *statefile.File, force bool) error {
 		}
 	}
 
-	// The remote backend needs to pass the `force` flag through to its client.
-	// For backends that support such operations, inform the client
-	// that a force push has been requested
-	if force {
-		s.EnableForcePush()
-	}
-
 	// We create a deep copy of the state here, because the caller also has
 	// a reference to the given object and can potentially go on to mutate
 	// it after we return, but we want the snapshot at this point in time.
 	s.state = f.State.DeepCopy()
 	s.lineage = f.Lineage
 	s.serial = f.Serial
+	s.forcePush = force
 
 	return nil
 }
@@ -136,6 +130,7 @@ func (s *State) WriteState(state *states.State) error {
 	// a reference to the given object and can potentially go on to mutate
 	// it after we return, but we want the snapshot at this point in time.
 	s.state = state.DeepCopy()
+	s.forcePush = false
 
 	return nil
 }
@@ -144,6 +139,9 @@ func (s *State) WriteState(state *states.State) error {
 func (s *State) PersistState(schemas *terraform.Schemas) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
+	log.Printf("[DEBUG] cloud/state: state read serial is: %d; serial is: %d", s.readSerial, s.serial)
+	log.Printf("[DEBUG] cloud/state: state read lineage is: %s; lineage is: %s", s.readLineage, s.lineage)
 
 	if s.readState != nil {
 		lineageUnchanged := s.readLineage != "" && s.lineage == s.readLineage
@@ -162,13 +160,16 @@ func (s *State) PersistState(schemas *terraform.Schemas) error {
 		if err != nil {
 			return fmt.Errorf("failed checking for existing remote state: %s", err)
 		}
+		log.Printf("[DEBUG] cloud/state: after refresh, state read serial is: %d; serial is: %d", s.readSerial, s.serial)
+		log.Printf("[DEBUG] cloud/state: after refresh, state read lineage is: %s; lineage is: %s", s.readLineage, s.lineage)
+
 		if s.lineage == "" { // indicates that no state snapshot is present yet
 			lineage, err := uuid.GenerateUUID()
 			if err != nil {
 				return fmt.Errorf("failed to generate initial lineage: %v", err)
 			}
 			s.lineage = lineage
-			s.serial = 0
+			s.serial++
 		}
 	}
 
@@ -405,19 +406,22 @@ func (s *State) Unlock(id string) error {
 }
 
 // Delete the remote state.
-func (s *State) Delete() error {
-	err := s.tfeClient.Workspaces.Delete(context.Background(), s.organization, s.workspace.Name)
+func (s *State) Delete(force bool) error {
+
+	var err error
+
+	isSafeDeleteSupported := s.workspace.Permissions.CanForceDelete != nil
+	if force || !isSafeDeleteSupported {
+		err = s.tfeClient.Workspaces.Delete(context.Background(), s.organization, s.workspace.Name)
+	} else {
+		err = s.tfeClient.Workspaces.SafeDelete(context.Background(), s.organization, s.workspace.Name)
+	}
+
 	if err != nil && err != tfe.ErrResourceNotFound {
 		return fmt.Errorf("error deleting workspace %s: %v", s.workspace.Name, err)
 	}
 
 	return nil
-}
-
-// EnableForcePush to allow the remote client to overwrite state
-// by implementing remote.ClientForcePusher
-func (s *State) EnableForcePush() {
-	s.forcePush = true
 }
 
 // GetRootOutputValues fetches output values from Terraform Cloud

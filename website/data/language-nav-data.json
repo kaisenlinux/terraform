@@ -94,6 +94,10 @@
             "path": "resources/provisioners/remote-exec"
           }
         ]
+      },
+      {
+        "title": "The <code>terraform_data</code> Resource Type",
+        "path": "resources/terraform-data"
       }
     ]
   },
@@ -1035,7 +1039,7 @@
     ]
   },
   {
-    "title": "Upgrading to Terraform v1.3",
+    "title": "Upgrading to Terraform v1.4",
     "path": "upgrade-guides"
   },
   {
