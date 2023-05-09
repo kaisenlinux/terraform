@@ -1,3 +1,33 @@
+## 1.4.6 (Unreleased)
+
+BUG FIXES
+
+* Fix bug when rendering plans that include null strings. ([#33029](https://github.com/hashicorp/terraform/issues/33029))
+* Fix bug when rendering plans that include unknown values in maps. ([#33029](https://github.com/hashicorp/terraform/issues/33029))
+* Fix bug where the plan would render twice when using older versions of TFE as a backend. ([#33018](https://github.com/hashicorp/terraform/issues/33018))
+* Fix bug where sensitive and unknown metadata was not being propagated to dynamic types while rendering plans. ([#33057](https://github.com/hashicorp/terraform/issues/33057))
+* Fix bug where sensitive metadata from the schema was not being included in the `terraform show -json` output. ([#33059](https://github.com/hashicorp/terraform/issues/33059))
+* Fix bug where computed attributes were not being rendered with the `# forces replacement` suffix. ([#33065](https://github.com/hashicorp/terraform/issues/33065))
+
+## 1.4.5 (April 12, 2023)
+
+* Revert change from [[#32892](https://github.com/hashicorp/terraform/issues/32892)] due to an upstream crash.
+* Fix planned destroy value which would cause `terraform_data` to fail when being replaced with `create_before_destroy` ([#32988](https://github.com/hashicorp/terraform/issues/32988))
+
+## 1.4.4 (March 30, 2023)
+
+Due to an incident while migrating build systems for the 1.4.3 release where 
+`CGO_ENABLED=0` was not set, we are rebuilding that version as 1.4.4 with the 
+flag set. No other changes have been made between 1.4.3 and 1.4.4.
+
+## 1.4.3 (March 30, 2023)
+
+BUG FIXES:
+* Prevent sensitive values in non-root module outputs from marking the entire output as sensitive ([#32891](https://github.com/hashicorp/terraform/issues/32891))
+* Fix the handling of planned data source objects when storing a failed plan ([#32876](https://github.com/hashicorp/terraform/issues/32876))
+* Don't fail during plan generation when targeting prevents resources with schema changes from performing a state upgrade ([#32900](https://github.com/hashicorp/terraform/issues/32900))
+* Skip planned changes in sensitive marks when the changed attribute is discarded by the provider ([#32892](https://github.com/hashicorp/terraform/issues/32892))
+
 ## 1.4.2 (March 16, 2023)
 
 BUG FIXES:

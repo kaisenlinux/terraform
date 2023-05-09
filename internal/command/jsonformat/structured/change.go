@@ -1,11 +1,10 @@
-package differ
+package structured
 
 import (
 	"encoding/json"
 	"reflect"
 
-	"github.com/hashicorp/terraform/internal/command/jsonformat/computed"
-	"github.com/hashicorp/terraform/internal/command/jsonformat/differ/attribute_path"
+	"github.com/hashicorp/terraform/internal/command/jsonformat/structured/attribute_path"
 	"github.com/hashicorp/terraform/internal/command/jsonplan"
 	"github.com/hashicorp/terraform/internal/command/jsonstate"
 	viewsjson "github.com/hashicorp/terraform/internal/command/views/json"
@@ -163,11 +162,11 @@ func FromJsonViewsOutput(output viewsjson.Output) Change {
 	}
 }
 
-func (change Change) asDiff(renderer computed.DiffRenderer) computed.Diff {
-	return computed.NewDiff(renderer, change.calculateChange(), change.ReplacePaths.Matches())
-}
-
-func (change Change) calculateChange() plans.Action {
+// CalculateAction does a very simple analysis to make the best guess at the
+// action this change describes. For complex types such as objects, maps, lists,
+// or sets it is likely more efficient to work out the action directly instead
+// of relying on this function.
+func (change Change) CalculateAction() plans.Action {
 	if (change.Before == nil && !change.BeforeExplicit) && (change.After != nil || change.AfterExplicit) {
 		return plans.Create
 	}
@@ -175,14 +174,14 @@ func (change Change) calculateChange() plans.Action {
 		return plans.Delete
 	}
 
-	if reflect.DeepEqual(change.Before, change.After) && change.AfterExplicit == change.BeforeExplicit && change.isAfterSensitive() == change.isBeforeSensitive() {
+	if reflect.DeepEqual(change.Before, change.After) && change.AfterExplicit == change.BeforeExplicit && change.IsAfterSensitive() == change.IsBeforeSensitive() {
 		return plans.NoOp
 	}
 
 	return plans.Update
 }
 
-// getDefaultActionForIteration is used to guess what the change could be for
+// GetDefaultActionForIteration is used to guess what the change could be for
 // complex attributes (collections and objects) and blocks.
 //
 // You can't really tell the difference between a NoOp and an Update just by
@@ -192,7 +191,7 @@ func (change Change) calculateChange() plans.Action {
 // values were null, and returns a NoOp for all other cases. It should be used
 // in conjunction with compareActions to calculate the actual action based on
 // the actions of the children.
-func (change Change) getDefaultActionForIteration() plans.Action {
+func (change Change) GetDefaultActionForIteration() plans.Action {
 	if change.Before == nil && change.After == nil {
 		return plans.NoOp
 	}
@@ -218,6 +217,40 @@ func (change Change) AsNoOp() Change {
 		Unknown:            false,
 		BeforeSensitive:    change.BeforeSensitive,
 		AfterSensitive:     change.BeforeSensitive,
+		ReplacePaths:       change.ReplacePaths,
+		RelevantAttributes: change.RelevantAttributes,
+	}
+}
+
+// AsDelete returns the current change as if it is a Delete operation.
+//
+// Basically it replaces all the after values with nil or false.
+func (change Change) AsDelete() Change {
+	return Change{
+		BeforeExplicit:     change.BeforeExplicit,
+		AfterExplicit:      false,
+		Before:             change.Before,
+		After:              nil,
+		Unknown:            nil,
+		BeforeSensitive:    change.BeforeSensitive,
+		AfterSensitive:     nil,
+		ReplacePaths:       change.ReplacePaths,
+		RelevantAttributes: change.RelevantAttributes,
+	}
+}
+
+// AsCreate returns the current change as if it is a Create operation.
+//
+// Basically it replaces all the before values with nil or false.
+func (change Change) AsCreate() Change {
+	return Change{
+		BeforeExplicit:     false,
+		AfterExplicit:      change.AfterExplicit,
+		Before:             nil,
+		After:              change.After,
+		Unknown:            change.Unknown,
+		BeforeSensitive:    nil,
+		AfterSensitive:     change.AfterSensitive,
 		ReplacePaths:       change.ReplacePaths,
 		RelevantAttributes: change.RelevantAttributes,
 	}

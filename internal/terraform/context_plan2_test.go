@@ -1705,6 +1705,60 @@ The -target option is not for routine use, and is provided only for exceptional 
 	})
 }
 
+func TestContext2Plan_untargetedResourceSchemaChange(t *testing.T) {
+	// an untargeted resource which requires a schema migration should not
+	// block planning due external changes in the plan.
+	addrA := mustResourceInstanceAddr("test_object.a")
+	addrB := mustResourceInstanceAddr("test_object.b")
+	m := testModuleInline(t, map[string]string{
+		"main.tf": `
+resource "test_object" "a" {
+}
+resource "test_object" "b" {
+}`,
+	})
+
+	state := states.BuildState(func(s *states.SyncState) {
+		s.SetResourceInstanceCurrent(addrA, &states.ResourceInstanceObjectSrc{
+			AttrsJSON: []byte(`{}`),
+			Status:    states.ObjectReady,
+		}, mustProviderConfig(`provider["registry.terraform.io/hashicorp/test"]`))
+		s.SetResourceInstanceCurrent(addrB, &states.ResourceInstanceObjectSrc{
+			// old_list is no longer in the schema
+			AttrsJSON: []byte(`{"old_list":["used to be","a list here"]}`),
+			Status:    states.ObjectReady,
+		}, mustProviderConfig(`provider["registry.terraform.io/hashicorp/test"]`))
+	})
+
+	p := simpleMockProvider()
+
+	// external changes trigger a "drift report", but because test_object.b was
+	// not targeted, the state was not fixed to match the schema and cannot be
+	// deocded for the report.
+	p.ReadResourceFn = func(req providers.ReadResourceRequest) (resp providers.ReadResourceResponse) {
+		obj := req.PriorState.AsValueMap()
+		// test_number changed externally
+		obj["test_number"] = cty.NumberIntVal(1)
+		resp.NewState = cty.ObjectVal(obj)
+		return resp
+	}
+
+	ctx := testContext2(t, &ContextOpts{
+		Providers: map[addrs.Provider]providers.Factory{
+			addrs.NewDefaultProvider("test"): testProviderFuncFixed(p),
+		},
+	})
+
+	_, diags := ctx.Plan(m, state, &PlanOpts{
+		Mode: plans.NormalMode,
+		Targets: []addrs.Targetable{
+			addrA,
+		},
+	})
+	//
+	assertNoErrors(t, diags)
+}
+
 func TestContext2Plan_movedResourceRefreshOnly(t *testing.T) {
 	addrA := mustResourceInstanceAddr("test_object.a")
 	addrB := mustResourceInstanceAddr("test_object.b")
@@ -3946,4 +4000,38 @@ output "out" {
 		Mode: plans.DestroyMode,
 	})
 	assertNoErrors(t, diags)
+}
+
+// Make sure the data sources in the prior state are serializeable even if
+// there were an error in the plan.
+func TestContext2Plan_dataSourceReadPlanError(t *testing.T) {
+	m, snap := testModuleWithSnapshot(t, "data-source-read-with-plan-error")
+	awsProvider := testProvider("aws")
+	testProvider := testProvider("test")
+
+	testProvider.PlanResourceChangeFn = func(req providers.PlanResourceChangeRequest) (resp providers.PlanResourceChangeResponse) {
+		resp.PlannedState = req.ProposedNewState
+		resp.Diagnostics = resp.Diagnostics.Append(errors.New("oops"))
+		return resp
+	}
+
+	state := states.NewState()
+
+	ctx := testContext2(t, &ContextOpts{
+		Providers: map[addrs.Provider]providers.Factory{
+			addrs.NewDefaultProvider("aws"):  testProviderFuncFixed(awsProvider),
+			addrs.NewDefaultProvider("test"): testProviderFuncFixed(testProvider),
+		},
+	})
+
+	plan, diags := ctx.Plan(m, state, DefaultPlanOpts)
+	if !diags.HasErrors() {
+		t.Fatalf("expected plan error")
+	}
+
+	// make sure we can serialize the plan even if there were an error
+	_, _, _, err := contextOptsForPlanViaFile(t, snap, plan)
+	if err != nil {
+		t.Fatalf("failed to round-trip through planfile: %s", err)
+	}
 }
