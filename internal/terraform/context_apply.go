@@ -1,3 +1,6 @@
+// Copyright (c) HashiCorp, Inc.
+// SPDX-License-Identifier: MPL-2.0
+
 package terraform
 
 import (
@@ -35,6 +38,19 @@ func (c *Context) Apply(plan *plans.Plan, config *configs.Config) (*states.State
 		return nil, diags
 	}
 
+	for _, rc := range plan.Changes.Resources {
+		// Import is a no-op change during an apply (all the real action happens during the plan) but we'd
+		// like to show some helpful output that mirrors the way we show other changes.
+		if rc.Importing != nil {
+			for _, h := range c.hooks {
+				// In future, we may need to call PostApplyImport separately elsewhere in the apply
+				// operation. For now, though, we'll call Pre and Post hooks together.
+				h.PreApplyImport(rc.Addr, *rc.Importing)
+				h.PostApplyImport(rc.Addr, *rc.Importing)
+			}
+		}
+	}
+
 	graph, operation, diags := c.applyGraph(plan, config, true)
 	if diags.HasErrors() {
 		return nil, diags
@@ -50,6 +66,9 @@ func (c *Context) Apply(plan *plans.Plan, config *configs.Config) (*states.State
 		// because that will tell us which checkable objects we're expecting
 		// to see updated results from during the apply step.
 		PlanTimeCheckResults: plan.Checks,
+
+		// We also want to propagate the timestamp from the plan file.
+		PlanTimeTimestamp: plan.Timestamp,
 	})
 	diags = diags.Append(walker.NonFatalDiagnostics)
 	diags = diags.Append(walkDiags)

@@ -1,3 +1,6 @@
+// Copyright (c) HashiCorp, Inc.
+// SPDX-License-Identifier: MPL-2.0
+
 package terraform
 
 import (
@@ -223,7 +226,7 @@ func evalVariableValidations(addr addrs.AbsInputVariableInstance, config *config
 				config.Name: val,
 			}),
 		},
-		Functions: ctx.EvaluationScope(nil, EvalDataForNoInstanceKey).Functions(),
+		Functions: ctx.EvaluationScope(nil, nil, EvalDataForNoInstanceKey).Functions(),
 	}
 
 	for _, validation := range config.Validations {

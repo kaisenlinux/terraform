@@ -1,3 +1,6 @@
+// Copyright (c) HashiCorp, Inc.
+// SPDX-License-Identifier: MPL-2.0
+
 syntax = "proto3";
 package tfplan;
 
@@ -82,6 +85,9 @@ message Plan {
     // RelevantAttributes lists individual resource attributes from
     // ResourceDrift which may have contributed to the plan changes.
     repeated resource_attr relevant_attributes = 15;
+
+    // timestamp is the record of truth for when the plan happened.
+    string timestamp = 21;
 }
 
 // Mode describes the planning mode that created the plan.
@@ -137,6 +143,14 @@ message Change {
     // sensitive. Values at these paths should be obscured in human-readable
     // output. This set is always empty for delete.
     repeated Path after_sensitive_paths = 4;
+
+    // Importing, if true, specifies that the resource is being imported as part
+    // of the change.
+    Importing importing = 5;
+
+    // GeneratedConfig contains any configuration that was generated as part of
+    // the change, as an HCL string.
+    string generated_config = 6;
 }
 
 // ResourceInstanceActionReason sometimes provides some additional user-facing
@@ -156,6 +170,7 @@ enum ResourceInstanceActionReason {
     REPLACE_BY_TRIGGERS = 9;
     READ_BECAUSE_CONFIG_UNKNOWN = 10;
     READ_BECAUSE_DEPENDENCY_PENDING = 11;
+    READ_BECAUSE_CHECK_NESTED = 13;
     DELETE_BECAUSE_NO_MOVE_TARGET = 12;
 }
 
@@ -237,6 +252,7 @@ message CheckResults {
         UNSPECIFIED = 0;
         RESOURCE = 1;
         OUTPUT_VALUE = 2;
+        CHECK = 3;
     }
 
     message ObjectResult {
@@ -291,4 +307,11 @@ message Path {
         }
     }
     repeated Step steps = 1;
+}
+
+// Importing contains the embedded metadata about the import operation if this
+// change describes it.
+message Importing {
+    // The original ID of the resource.
+    string id = 1;
 }

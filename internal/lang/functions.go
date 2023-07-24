@@ -1,3 +1,6 @@
+// Copyright (c) HashiCorp, Inc.
+// SPDX-License-Identifier: MPL-2.0
+
 package lang
 
 import (
@@ -117,6 +120,7 @@ func (s *Scope) Functions() map[string]function.Function {
 			"sort":             stdlib.SortFunc,
 			"split":            stdlib.SplitFunc,
 			"startswith":       funcs.StartsWithFunc,
+			"strcontains":      funcs.StrContainsFunc,
 			"strrev":           stdlib.ReverseFunc,
 			"substr":           stdlib.SubstrFunc,
 			"sum":              funcs.SumFunc,
@@ -157,6 +161,12 @@ func (s *Scope) Functions() map[string]function.Function {
 		if s.ConsoleMode {
 			// The type function is only available in terraform console.
 			s.funcs["type"] = funcs.TypeFunc
+		}
+
+		if !s.ConsoleMode {
+			// The plantimestamp function doesn't make sense in the terraform
+			// console.
+			s.funcs["plantimestamp"] = funcs.MakeStaticTimestampFunc(s.PlanTimestamp)
 		}
 
 		if s.PureOnly {

@@ -1,3 +1,6 @@
+// Copyright (c) HashiCorp, Inc.
+// SPDX-License-Identifier: MPL-2.0
+
 package command
 
 import (
@@ -154,7 +157,7 @@ func testModuleWithSnapshot(t *testing.T, name string) (*configs.Config, *config
 	// Test modules usually do not refer to remote sources, and for local
 	// sources only this ultimately just records all of the module paths
 	// in a JSON file so that we can load them below.
-	inst := initwd.NewModuleInstaller(loader.ModulesDir(), registry.NewClient(nil, nil))
+	inst := initwd.NewModuleInstaller(loader.ModulesDir(), loader, registry.NewClient(nil, nil))
 	_, instDiags := inst.InstallModules(context.Background(), dir, true, initwd.ModuleInstallHooksImpl{})
 	if instDiags.HasErrors() {
 		t.Fatal(instDiags.Err())
@@ -247,6 +250,24 @@ func testPlanFileNoop(t *testing.T) string {
 	state := states.NewState()
 	plan := testPlan(t)
 	return testPlanFile(t, snap, state, plan)
+}
+
+func testFileEquals(t *testing.T, got, want string) {
+	t.Helper()
+
+	actual, err := os.ReadFile(got)
+	if err != nil {
+		t.Fatalf("error reading %s", got)
+	}
+
+	expected, err := os.ReadFile(want)
+	if err != nil {
+		t.Fatalf("error reading %s", want)
+	}
+
+	if diff := cmp.Diff(string(actual), string(expected)); len(diff) > 0 {
+		t.Fatalf("got:\n%s\nwant:\n%s\ndiff:\n%s", actual, expected, diff)
+	}
 }
 
 func testReadPlan(t *testing.T, path string) *plans.Plan {

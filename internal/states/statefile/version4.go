@@ -1,3 +1,6 @@
+// Copyright (c) HashiCorp, Inc.
+// SPDX-License-Identifier: MPL-2.0
+
 package statefile
 
 import (
@@ -638,6 +641,8 @@ func decodeCheckableObjectKindV4(in string) addrs.CheckableKind {
 		return addrs.CheckableResource
 	case "output":
 		return addrs.CheckableOutputValue
+	case "check":
+		return addrs.CheckableCheck
 	default:
 		// We'll treat anything else as invalid just as a concession to
 		// forward-compatible parsing, in case a later version of Terraform
@@ -652,6 +657,8 @@ func encodeCheckableObjectKindV4(in addrs.CheckableKind) string {
 		return "resource"
 	case addrs.CheckableOutputValue:
 		return "output"
+	case addrs.CheckableCheck:
+		return "check"
 	default:
 		panic(fmt.Sprintf("unsupported checkable object kind %s", in))
 	}

@@ -1,3 +1,6 @@
+// Copyright (c) HashiCorp, Inc.
+// SPDX-License-Identifier: MPL-2.0
+
 // Package backend provides interfaces that the CLI uses to interact with
 // Terraform. A backend provides the abstraction that allows the same CLI
 // to simultaneously support both local and remote operations for seamlessly
@@ -292,6 +295,11 @@ type Operation struct {
 	// Workspace is the name of the workspace that this operation should run
 	// in, which controls which named state is used.
 	Workspace string
+
+	// GenerateConfigOut tells the operation both that it should generate config
+	// for unmatched import targets and where any generated config should be
+	// written to.
+	GenerateConfigOut string
 }
 
 // HasConfig returns true if and only if the operation has a ConfigDir value

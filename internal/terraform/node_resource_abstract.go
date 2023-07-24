@@ -1,3 +1,6 @@
+// Copyright (c) HashiCorp, Inc.
+// SPDX-License-Identifier: MPL-2.0
+
 package terraform
 
 import (
@@ -75,6 +78,10 @@ type NodeAbstractResource struct {
 
 	// This resource may expand into instances which need to be imported.
 	importTargets []*ImportTarget
+
+	// generateConfigPath tells this node which file to write generated config
+	// into. If empty, then config should not be generated.
+	generateConfigPath string
 }
 
 var (
@@ -129,10 +136,6 @@ func (n *NodeAbstractResource) ModulePath() addrs.Module {
 // GraphNodeReferenceable
 func (n *NodeAbstractResource) ReferenceableAddrs() []addrs.Referenceable {
 	return []addrs.Referenceable{n.Addr.Resource}
-}
-
-func (n *NodeAbstractResource) Import(addr *ImportTarget) {
-
 }
 
 // GraphNodeReferencer
@@ -257,6 +260,21 @@ func (n *NodeAbstractResource) ProvidedBy() (addrs.ProviderConfig, bool) {
 		return n.storedProviderConfig, true
 	}
 
+	// We might have an import target that is providing a specific provider,
+	// this is okay as we know there is nothing else potentially providing a
+	// provider configuration.
+	if len(n.importTargets) > 0 {
+		// The import targets should either all be defined via config or none
+		// of them should be. They should also all have the same provider, so it
+		// shouldn't matter which we check here, as they'll all give the same.
+		if n.importTargets[0].Config != nil && n.importTargets[0].Config.ProviderConfigRef != nil {
+			return addrs.LocalProviderConfig{
+				LocalName: n.importTargets[0].Config.ProviderConfigRef.Name,
+				Alias:     n.importTargets[0].Config.ProviderConfigRef.Alias,
+			}, false
+		}
+	}
+
 	// No provider configuration found; return a default address
 	return addrs.AbsProviderConfig{
 		Provider: n.Provider(),
@@ -272,6 +290,16 @@ func (n *NodeAbstractResource) Provider() addrs.Provider {
 	if n.storedProviderConfig.Provider.Type != "" {
 		return n.storedProviderConfig.Provider
 	}
+
+	if len(n.importTargets) > 0 {
+		// The import targets should either all be defined via config or none
+		// of them should be. They should also all have the same provider, so it
+		// shouldn't matter which we check here, as they'll all give the same.
+		if n.importTargets[0].Config != nil {
+			return n.importTargets[0].Config.Provider
+		}
+	}
+
 	return addrs.ImpliedProviderForUnqualifiedType(n.Addr.Resource.ImpliedProvider())
 }
 
@@ -361,7 +389,7 @@ func (n *NodeAbstractResource) writeResourceState(ctx EvalContext, addr addrs.Ab
 	expander := ctx.InstanceExpander()
 
 	switch {
-	case n.Config.Count != nil:
+	case n.Config != nil && n.Config.Count != nil:
 		count, countDiags := evaluateCountExpression(n.Config.Count, ctx)
 		diags = diags.Append(countDiags)
 		if countDiags.HasErrors() {
@@ -371,7 +399,7 @@ func (n *NodeAbstractResource) writeResourceState(ctx EvalContext, addr addrs.Ab
 		state.SetResourceProvider(addr, n.ResolvedProvider)
 		expander.SetResourceCount(addr.Module, n.Addr.Resource, count)
 
-	case n.Config.ForEach != nil:
+	case n.Config != nil && n.Config.ForEach != nil:
 		forEach, forEachDiags := evaluateForEachExpression(n.Config.ForEach, ctx)
 		diags = diags.Append(forEachDiags)
 		if forEachDiags.HasErrors() {

@@ -1,3 +1,6 @@
+// Copyright (c) HashiCorp, Inc.
+// SPDX-License-Identifier: MPL-2.0
+
 package local
 
 import (
@@ -187,11 +190,12 @@ func (b *Local) localRunDirect(op *backend.Operation, run *backend.LocalRun, cor
 	}
 
 	planOpts := &terraform.PlanOpts{
-		Mode:         op.PlanMode,
-		Targets:      op.Targets,
-		ForceReplace: op.ForceReplace,
-		SetVariables: variables,
-		SkipRefresh:  op.Type != backend.OperationTypeRefresh && !op.PlanRefresh,
+		Mode:               op.PlanMode,
+		Targets:            op.Targets,
+		ForceReplace:       op.ForceReplace,
+		SetVariables:       variables,
+		SkipRefresh:        op.Type != backend.OperationTypeRefresh && !op.PlanRefresh,
+		GenerateConfigPath: op.GenerateConfigOut,
 	}
 	run.PlanOpts = planOpts
 

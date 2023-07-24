@@ -1,6 +1,10 @@
+// Copyright (c) HashiCorp, Inc.
+// SPDX-License-Identifier: MPL-2.0
+
 package configs
 
 import (
+	"os"
 	"testing"
 
 	"github.com/go-test/deep"
@@ -31,6 +35,7 @@ func TestConfigProviderTypes(t *testing.T) {
 	got = cfg.ProviderTypes()
 	want := []addrs.Provider{
 		addrs.NewDefaultProvider("aws"),
+		addrs.NewDefaultProvider("local"),
 		addrs.NewDefaultProvider("null"),
 		addrs.NewDefaultProvider("template"),
 		addrs.NewDefaultProvider("test"),
@@ -418,4 +423,46 @@ func TestConfigAddProviderRequirements(t *testing.T) {
 	}
 	diags = cfg.addProviderRequirements(reqs, true)
 	assertNoDiagnostics(t, diags)
+}
+
+func TestConfigImportProviderClashesWithModules(t *testing.T) {
+	src, err := os.ReadFile("testdata/invalid-import-files/import-and-module-clash.tf")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	parser := testParser(map[string]string{
+		"main.tf": string(src),
+	})
+
+	_, diags := parser.LoadConfigFile("main.tf")
+	assertExactDiagnostics(t, diags, []string{
+		`main.tf:9,3-19: Invalid import provider argument; The provider argument can only be specified in import blocks that will generate configuration.
+
+Use the providers argument within the module block to configure providers for all resources within a module, including imported resources.`,
+	})
+}
+
+func TestConfigImportProviderClashesWithResources(t *testing.T) {
+	cfg, diags := testModuleConfigFromFile("testdata/invalid-import-files/import-and-resource-clash.tf")
+	assertNoDiagnostics(t, diags)
+
+	diags = cfg.addProviderRequirements(getproviders.Requirements{}, true)
+	assertExactDiagnostics(t, diags, []string{
+		`testdata/invalid-import-files/import-and-resource-clash.tf:9,3-19: Invalid import provider argument; The provider argument can only be specified in import blocks that will generate configuration.
+
+Use the provider argument in the target resource block to configure the provider for a resource with explicit provider configuration.`,
+	})
+}
+
+func TestConfigImportProviderWithNoResourceProvider(t *testing.T) {
+	cfg, diags := testModuleConfigFromFile("testdata/invalid-import-files/import-and-no-resource.tf")
+	assertNoDiagnostics(t, diags)
+
+	diags = cfg.addProviderRequirements(getproviders.Requirements{}, true)
+	assertExactDiagnostics(t, diags, []string{
+		`testdata/invalid-import-files/import-and-no-resource.tf:5,3-19: Invalid import provider argument; The provider argument can only be specified in import blocks that will generate configuration.
+
+Use the provider argument in the target resource block to configure the provider for a resource with explicit provider configuration.`,
+	})
 }

@@ -1,3 +1,6 @@
+// Copyright (c) HashiCorp, Inc.
+// SPDX-License-Identifier: MPL-2.0
+
 package main
 
 import (
@@ -299,7 +302,7 @@ func initCommands(
 				Version:           Version,
 				VersionPrerelease: VersionPrerelease,
 				Platform:          getproviders.CurrentPlatform,
-				//CheckFunc:         commandVersionCheck,
+				CheckFunc:         commandVersionCheck,
 			}, nil
 		},
 

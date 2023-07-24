@@ -1,8 +1,10 @@
+// Copyright (c) HashiCorp, Inc.
+// SPDX-License-Identifier: MPL-2.0
+
 package terraform
 
 import (
 	"fmt"
-	"log"
 	"strings"
 
 	"github.com/hashicorp/terraform/internal/addrs"
@@ -43,6 +45,10 @@ type nodeExpandPlannableResource struct {
 	// structure in the future, as we need to compare for equality and take the
 	// union of multiple groups of dependencies.
 	dependencies []addrs.ConfigResource
+
+	// legacyImportMode is set if the graph is being constructed following an
+	// invocation of the legacy "terraform import" CLI command.
+	legacyImportMode bool
 }
 
 var (
@@ -193,12 +199,6 @@ func (n *nodeExpandPlannableResource) DynamicExpand(ctx EvalContext) (*Graph, er
 func (n *nodeExpandPlannableResource) expandResourceInstances(globalCtx EvalContext, resAddr addrs.AbsResource, g *Graph, instAddrs addrs.Set[addrs.Checkable]) error {
 	var diags tfdiags.Diagnostics
 
-	if n.Config == nil {
-		// Nothing to do, then.
-		log.Printf("[TRACE] nodeExpandPlannableResource: no configuration present for %s", n.Name())
-		return diags.ErrWithWarnings()
-	}
-
 	// The rest of our work here needs to know which module instance it's
 	// working in, so that it can evaluate expressions in the appropriate scope.
 	moduleCtx := globalCtx.WithPath(resAddr.Module)
@@ -311,13 +311,18 @@ func (n *nodeExpandPlannableResource) resourceInstanceSubgraph(ctx EvalContext, 
 
 	// The concrete resource factory we'll use
 	concreteResource := func(a *NodeAbstractResourceInstance) dag.Vertex {
-		// check if this node is being imported first
-		for _, importTarget := range n.importTargets {
-			if importTarget.Addr.Equal(a.Addr) {
-				return &graphNodeImportState{
-					Addr:             importTarget.Addr,
-					ID:               importTarget.ID,
-					ResolvedProvider: n.ResolvedProvider,
+		var m *NodePlannableResourceInstance
+
+		// If we're in legacy import mode (the import CLI command), we only need
+		// to return the import node, not a plannable resource node.
+		if n.legacyImportMode {
+			for _, importTarget := range n.importTargets {
+				if importTarget.Addr.Equal(a.Addr) {
+					return &graphNodeImportState{
+						Addr:             importTarget.Addr,
+						ID:               importTarget.ID,
+						ResolvedProvider: n.ResolvedProvider,
+					}
 				}
 			}
 		}
@@ -331,8 +336,9 @@ func (n *nodeExpandPlannableResource) resourceInstanceSubgraph(ctx EvalContext, 
 		a.dependsOn = n.dependsOn
 		a.Dependencies = n.dependencies
 		a.preDestroyRefresh = n.preDestroyRefresh
+		a.generateConfigPath = n.generateConfigPath
 
-		return &NodePlannableResourceInstance{
+		m = &NodePlannableResourceInstance{
 			NodeAbstractResourceInstance: a,
 
 			// By the time we're walking, we've figured out whether we need
@@ -343,6 +349,20 @@ func (n *nodeExpandPlannableResource) resourceInstanceSubgraph(ctx EvalContext, 
 			skipPlanChanges:          n.skipPlanChanges,
 			forceReplace:             n.forceReplace,
 		}
+
+		for _, importTarget := range n.importTargets {
+			if importTarget.Addr.Equal(a.Addr) {
+				// If we get here, we're definitely not in legacy import mode,
+				// so go ahead and plan the resource changes including import.
+				m.importTarget = ImportTarget{
+					ID:     importTarget.ID,
+					Addr:   importTarget.Addr,
+					Config: importTarget.Config,
+				}
+			}
+		}
+
+		return m
 	}
 
 	// The concrete resource factory we'll use for orphans

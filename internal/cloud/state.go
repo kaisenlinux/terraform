@@ -1,3 +1,6 @@
+// Copyright (c) HashiCorp, Inc.
+// SPDX-License-Identifier: MPL-2.0
+
 package cloud
 
 import (
@@ -9,15 +12,20 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/zclconf/go-cty/cty"
 	"github.com/zclconf/go-cty/cty/gocty"
 
 	tfe "github.com/hashicorp/go-tfe"
 	uuid "github.com/hashicorp/go-uuid"
+
+	"github.com/hashicorp/terraform/internal/backend/local"
 	"github.com/hashicorp/terraform/internal/command/jsonstate"
 	"github.com/hashicorp/terraform/internal/states"
 	"github.com/hashicorp/terraform/internal/states/remote"
@@ -52,6 +60,15 @@ type State struct {
 	stateUploadErr       bool
 	forcePush            bool
 	lockInfo             *statemgr.LockInfo
+
+	// The server can optionally return an X-Terraform-Snapshot-Interval header
+	// in its response to the "Create State Version" operation, which specifies
+	// a number of seconds the server would prefer us to wait before trying
+	// to write a new snapshot. If this is non-zero then we'll wait at least
+	// this long before allowing another intermediate snapshot. This does
+	// not effect final snapshots after an operation, which will always
+	// be written to the remote API.
+	stateSnapshotInterval time.Duration
 }
 
 var ErrStateVersionUnauthorizedUpgradeState = errors.New(strings.TrimSpace(`
@@ -63,6 +80,7 @@ remote state version.
 
 var _ statemgr.Full = (*State)(nil)
 var _ statemgr.Migrator = (*State)(nil)
+var _ local.IntermediateStateConditionalPersister = (*State)(nil)
 
 // statemgr.Reader impl.
 func (s *State) State() *states.State {
@@ -220,6 +238,23 @@ func (s *State) PersistState(schemas *terraform.Schemas) error {
 	return nil
 }
 
+// ShouldPersistIntermediateState implements local.IntermediateStateConditionalPersister
+func (s *State) ShouldPersistIntermediateState(info *local.IntermediateStatePersistInfo) bool {
+	if info.ForcePersist {
+		return true
+	}
+
+	// Our persist interval is the largest of either the caller's requested
+	// interval or the server's requested interval.
+	wantInterval := info.RequestedPersistInterval
+	if s.stateSnapshotInterval > wantInterval {
+		wantInterval = s.stateSnapshotInterval
+	}
+
+	currentInterval := time.Since(info.LastPersist)
+	return currentInterval >= wantInterval
+}
+
 func (s *State) uploadState(lineage string, serial uint64, isForcePush bool, state, jsonState, jsonStateOutputs []byte) error {
 	ctx := context.Background()
 
@@ -239,6 +274,30 @@ func (s *State) uploadState(lineage string, serial uint64, isForcePush bool, sta
 	if runID != "" {
 		options.Run = &tfe.Run{ID: runID}
 	}
+
+	// The server is allowed to dynamically request a different time interval
+	// than we'd normally use, for example if it's currently under heavy load
+	// and needs clients to backoff for a while.
+	ctx = tfe.ContextWithResponseHeaderHook(ctx, func(status int, header http.Header) {
+		intervalStr := header.Get("x-terraform-snapshot-interval")
+
+		if intervalSecs, err := strconv.ParseInt(intervalStr, 10, 64); err == nil {
+			if intervalSecs > 3600 {
+				// More than an hour is an unreasonable delay, so we'll just
+				// saturate at one hour.
+				intervalSecs = 3600
+			} else if intervalSecs < 0 {
+				intervalSecs = 0
+			}
+			s.stateSnapshotInterval = time.Duration(intervalSecs) * time.Second
+		} else {
+			// If the header field is either absent or invalid then we'll
+			// just choose zero, which effectively means that we'll just use
+			// the caller's requested interval instead.
+			s.stateSnapshotInterval = time.Duration(0)
+		}
+	})
+
 	// Create the new state.
 	_, err := s.tfeClient.StateVersions.Create(ctx, s.workspace.ID, options)
 	return err

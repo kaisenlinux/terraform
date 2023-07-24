@@ -1,3 +1,6 @@
+// Copyright (c) HashiCorp, Inc.
+// SPDX-License-Identifier: MPL-2.0
+
 package terraform
 
 import (
@@ -6,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"time"
 
 	"github.com/agext/levenshtein"
 	"github.com/hashicorp/hcl/v2"
@@ -60,6 +64,8 @@ type Evaluator struct {
 	// Changes is the set of proposed changes, embedded in a wrapper that
 	// ensures they can be safely accessed and modified concurrently.
 	Changes *plans.ChangesSync
+
+	PlanTimestamp time.Time
 }
 
 // Scope creates an evaluation scope for the given module path and optional
@@ -68,12 +74,14 @@ type Evaluator struct {
 // If the "self" argument is nil then the "self" object is not available
 // in evaluated expressions. Otherwise, it behaves as an alias for the given
 // address.
-func (e *Evaluator) Scope(data lang.Data, self addrs.Referenceable) *lang.Scope {
+func (e *Evaluator) Scope(data lang.Data, self addrs.Referenceable, source addrs.Referenceable) *lang.Scope {
 	return &lang.Scope{
-		Data:     data,
-		SelfAddr: self,
-		PureOnly: e.Operation != walkApply && e.Operation != walkDestroy && e.Operation != walkEval,
-		BaseDir:  ".", // Always current working directory for now.
+		Data:          data,
+		SelfAddr:      self,
+		SourceAddr:    source,
+		PureOnly:      e.Operation != walkApply && e.Operation != walkDestroy && e.Operation != walkEval,
+		BaseDir:       ".", // Always current working directory for now.
+		PlanTimestamp: e.PlanTimestamp,
 	}
 }
 

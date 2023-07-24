@@ -1,3 +1,6 @@
+// Copyright (c) HashiCorp, Inc.
+// SPDX-License-Identifier: MPL-2.0
+
 package views
 
 import (
@@ -202,8 +205,39 @@ func TestJSONView_ChangeSummary(t *testing.T) {
 			"type":     "change_summary",
 			"changes": map[string]interface{}{
 				"add":       float64(1),
+				"import":    float64(0),
 				"change":    float64(2),
 				"remove":    float64(3),
+				"operation": "apply",
+			},
+		},
+	}
+	testJSONViewOutputEquals(t, done(t).Stdout(), want)
+}
+
+func TestJSONView_ChangeSummaryWithImport(t *testing.T) {
+	streams, done := terminal.StreamsForTesting(t)
+	jv := NewJSONView(NewView(streams))
+
+	jv.ChangeSummary(&viewsjson.ChangeSummary{
+		Add:       1,
+		Change:    2,
+		Remove:    3,
+		Import:    1,
+		Operation: viewsjson.OperationApplied,
+	})
+
+	want := []map[string]interface{}{
+		{
+			"@level":   "info",
+			"@message": "Apply complete! Resources: 1 imported, 1 added, 2 changed, 3 destroyed.",
+			"@module":  "terraform.ui",
+			"type":     "change_summary",
+			"changes": map[string]interface{}{
+				"add":       float64(1),
+				"change":    float64(2),
+				"remove":    float64(3),
+				"import":    float64(1),
 				"operation": "apply",
 			},
 		},

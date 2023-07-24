@@ -1,3 +1,6 @@
+// Copyright (c) HashiCorp, Inc.
+// SPDX-License-Identifier: MPL-2.0
+
 package command
 
 import (
@@ -271,6 +274,16 @@ func (c *InitCommand) Run(args []string) int {
 		c.Ui.Error(strings.TrimSpace(errInitConfigError))
 		c.showDiagnostics(diags)
 		return 1
+	}
+
+	if cb, ok := back.(*cloud.Cloud); ok {
+		if c.RunningInAutomation {
+			if err := cb.AssertImportCompatible(config); err != nil {
+				diags = diags.Append(tfdiags.Sourceless(tfdiags.Error, "Compatibility error", err.Error()))
+				c.showDiagnostics(diags)
+				return 1
+			}
+		}
 	}
 
 	// Now that we have loaded all modules, check the module tree for missing providers.
@@ -625,7 +638,7 @@ func (c *InitCommand) getProviders(config *configs.Config, state *states.State, 
 					diags = diags.Append(tfdiags.Sourceless(
 						tfdiags.Error,
 						"Invalid provider registry host",
-						fmt.Sprintf("The host %q given in in provider source address %q does not offer a Terraform provider registry that is compatible with this Terraform version, but it may be compatible with a different Terraform version.",
+						fmt.Sprintf("The host %q given in provider source address %q does not offer a Terraform provider registry that is compatible with this Terraform version, but it may be compatible with a different Terraform version.",
 							errorTy.Hostname, provider.String(),
 						),
 					))
@@ -634,7 +647,7 @@ func (c *InitCommand) getProviders(config *configs.Config, state *states.State, 
 					diags = diags.Append(tfdiags.Sourceless(
 						tfdiags.Error,
 						"Invalid provider registry host",
-						fmt.Sprintf("The host %q given in in provider source address %q does not offer a Terraform provider registry.",
+						fmt.Sprintf("The host %q given in provider source address %q does not offer a Terraform provider registry.",
 							errorTy.Hostname, provider.String(),
 						),
 					))

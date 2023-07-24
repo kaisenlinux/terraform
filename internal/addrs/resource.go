@@ -1,3 +1,6 @@
+// Copyright (c) HashiCorp, Inc.
+// SPDX-License-Identifier: MPL-2.0
+
 package addrs
 
 import (
@@ -329,8 +332,8 @@ func (r AbsResourceInstance) AffectedAbsResource() AbsResource {
 	}
 }
 
-func (r AbsResourceInstance) Check(t CheckType, i int) Check {
-	return Check{
+func (r AbsResourceInstance) CheckRule(t CheckRuleType, i int) CheckRule {
+	return CheckRule{
 		Container: r,
 		Type:      t,
 		Index:     i,

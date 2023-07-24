@@ -1,3 +1,6 @@
+// Copyright (c) HashiCorp, Inc.
+// SPDX-License-Identifier: MPL-2.0
+
 package command
 
 import (
@@ -188,6 +191,47 @@ func TestPlan_noState(t *testing.T) {
 	if !expected.RawEquals(actual) {
 		t.Fatalf("wrong prior state\ngot:  %#v\nwant: %#v", actual, expected)
 	}
+}
+
+func TestPlan_generatedConfigPath(t *testing.T) {
+	td := t.TempDir()
+	testCopyDir(t, testFixturePath("plan-import-config-gen"), td)
+	defer testChdir(t, td)()
+
+	genPath := filepath.Join(td, "generated.tf")
+
+	p := planFixtureProvider()
+	view, done := testView(t)
+
+	c := &PlanCommand{
+		Meta: Meta{
+			testingOverrides: metaOverridesForProvider(p),
+			View:             view,
+		},
+	}
+
+	p.ImportResourceStateResponse = &providers.ImportResourceStateResponse{
+		ImportedResources: []providers.ImportedResource{
+			{
+				TypeName: "test_instance",
+				State: cty.ObjectVal(map[string]cty.Value{
+					"id": cty.StringVal("bar"),
+				}),
+				Private: nil,
+			},
+		},
+	}
+
+	args := []string{
+		"-generate-config-out", genPath,
+	}
+	code := c.Run(args)
+	output := done(t)
+	if code != 0 {
+		t.Fatalf("bad: %d\n\n%s", code, output.Stderr())
+	}
+
+	testFileEquals(t, genPath, filepath.Join(td, "generated.tf.expected"))
 }
 
 func TestPlan_outPath(t *testing.T) {
