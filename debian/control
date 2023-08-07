@@ -15,7 +15,6 @@ Package: terraform
 Architecture: amd64 arm64 i386
 Depends: ${shlibs:Depends},
 	 ${misc:Depends},
-	 golang-go (>= 1.18),
 Suggests: tfsec
 Description: Infrastructure as code tool to manage cloud environments
  Terraform enables you to safely and predictably create, change, and improve infrastructure. It is an open source tool that codifies APIs into declarative configuration files that can be shared amongst team members, treated as code, edited, reviewed, and versioned.

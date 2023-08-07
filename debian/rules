@@ -18,4 +18,4 @@ override_dh_auto_test:
 override_dh_dwz:
 
 override_dh_auto_install:
-	dh_auto_install -- --no-source
+	install -p -m 0755 $(CURDIR)/terraform $(CURDIR)/debian/terraform/usr/bin
