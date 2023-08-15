@@ -1,3 +1,9 @@
+terraform (1.5.5-1kaisen) kaisen-packages; urgency=medium
+
+  * Import the 1.5.5 release
+
+ -- Kevin Chevreuil - Kaisen <kaisen@kaisenlinux.org>  Wed, 16 Aug 2023 00:34:32 +0100
+
 terraform (1.5.4-1kaisen) kaisen-packages; urgency=medium
 
   * Import the 1.5.4 release
