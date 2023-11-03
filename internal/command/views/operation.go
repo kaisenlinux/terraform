@@ -1,5 +1,5 @@
 // Copyright (c) HashiCorp, Inc.
-// SPDX-License-Identifier: MPL-2.0
+// SPDX-License-Identifier: BUSL-1.1
 
 package views
 
@@ -115,12 +115,12 @@ func (v *OperationHuman) Plan(plan *plans.Plan, schemas *terraform.Schemas) {
 	}
 
 	// Side load some data that we can't extract from the JSON plan.
-	var opts []jsonformat.PlanRendererOpt
+	var opts []plans.Quality
 	if !plan.CanApply() {
-		opts = append(opts, jsonformat.CanNotApply)
+		opts = append(opts, plans.NoChanges)
 	}
 	if plan.Errored {
-		opts = append(opts, jsonformat.Errored)
+		opts = append(opts, plans.Errored)
 	}
 
 	renderer.RenderHumanPlan(jplan, plan.UIMode, opts...)

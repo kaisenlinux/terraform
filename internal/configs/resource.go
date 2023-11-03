@@ -1,5 +1,5 @@
 // Copyright (c) HashiCorp, Inc.
-// SPDX-License-Identifier: MPL-2.0
+// SPDX-License-Identifier: BUSL-1.1
 
 package configs
 
@@ -568,7 +568,7 @@ func decodeReplaceTriggeredBy(expr hcl.Expression) ([]hcl.Expression, hcl.Diagno
 			exprs[i] = expr
 		}
 
-		refs, refDiags := lang.ReferencesInExpr(expr)
+		refs, refDiags := lang.ReferencesInExpr(addrs.ParseRef, expr)
 		for _, diag := range refDiags {
 			severity := hcl.DiagError
 			if diag.Severity() == tfdiags.Warning {

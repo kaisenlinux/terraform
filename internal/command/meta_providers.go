@@ -1,5 +1,5 @@
 // Copyright (c) HashiCorp, Inc.
-// SPDX-License-Identifier: MPL-2.0
+// SPDX-License-Identifier: BUSL-1.1
 
 package command
 
@@ -18,7 +18,6 @@ import (
 	terraformProvider "github.com/hashicorp/terraform/internal/builtin/providers/terraform"
 	"github.com/hashicorp/terraform/internal/getproviders"
 	"github.com/hashicorp/terraform/internal/logging"
-	"github.com/hashicorp/terraform/internal/moduletest"
 	tfplugin "github.com/hashicorp/terraform/internal/plugin"
 	tfplugin6 "github.com/hashicorp/terraform/internal/plugin6"
 	"github.com/hashicorp/terraform/internal/providercache"
@@ -341,9 +340,6 @@ func (m *Meta) internalProviders() map[string]providers.Factory {
 		"terraform": func() (providers.Interface, error) {
 			return terraformProvider.NewProvider(), nil
 		},
-		"test": func() (providers.Interface, error) {
-			return moduletest.NewProvider(), nil
-		},
 	}
 }
 
@@ -386,10 +382,12 @@ func providerFactory(meta *providercache.CachedProvider) providers.Factory {
 		case 5:
 			p := raw.(*tfplugin.GRPCProvider)
 			p.PluginClient = client
+			p.Addr = meta.Provider
 			return p, nil
 		case 6:
 			p := raw.(*tfplugin6.GRPCProvider)
 			p.PluginClient = client
+			p.Addr = meta.Provider
 			return p, nil
 		default:
 			panic("unsupported protocol version")

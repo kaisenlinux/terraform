@@ -1,5 +1,5 @@
 // Copyright (c) HashiCorp, Inc.
-// SPDX-License-Identifier: MPL-2.0
+// SPDX-License-Identifier: BUSL-1.1
 
 package terraform
 
@@ -13,15 +13,19 @@ import (
 
 	"github.com/davecgh/go-spew/spew"
 	"github.com/google/go-cmp/cmp"
+	"github.com/zclconf/go-cty/cty"
+
+	// "github.com/hashicorp/hcl/v2"
 	"github.com/hashicorp/terraform/internal/addrs"
 	"github.com/hashicorp/terraform/internal/checks"
+
+	// "github.com/hashicorp/terraform/internal/configs"
 	"github.com/hashicorp/terraform/internal/configs/configschema"
 	"github.com/hashicorp/terraform/internal/lang/marks"
 	"github.com/hashicorp/terraform/internal/plans"
 	"github.com/hashicorp/terraform/internal/providers"
 	"github.com/hashicorp/terraform/internal/states"
 	"github.com/hashicorp/terraform/internal/tfdiags"
-	"github.com/zclconf/go-cty/cty"
 )
 
 func TestContext2Plan_removedDuringRefresh(t *testing.T) {
@@ -2781,13 +2785,13 @@ resource "test_resource" "a" {
 		},
 	})
 
-	ctx := testContext2(t, &ContextOpts{
-		Providers: map[addrs.Provider]providers.Factory{
-			addrs.NewDefaultProvider("test"): testProviderFuncFixed(p),
-		},
-	})
-
 	t.Run("conditions pass", func(t *testing.T) {
+		ctx := testContext2(t, &ContextOpts{
+			Providers: map[addrs.Provider]providers.Factory{
+				addrs.NewDefaultProvider("test"): testProviderFuncFixed(p),
+			},
+		})
+
 		p.PlanResourceChangeFn = func(req providers.PlanResourceChangeRequest) (resp providers.PlanResourceChangeResponse) {
 			m := req.ProposedNewState.AsValueMap()
 			m["output"] = cty.StringVal("bar")
@@ -2819,6 +2823,12 @@ resource "test_resource" "a" {
 	})
 
 	t.Run("precondition fail", func(t *testing.T) {
+		ctx := testContext2(t, &ContextOpts{
+			Providers: map[addrs.Provider]providers.Factory{
+				addrs.NewDefaultProvider("test"): testProviderFuncFixed(p),
+			},
+		})
+
 		_, diags := ctx.Plan(m, states.NewState(), &PlanOpts{
 			Mode: plans.NormalMode,
 			SetVariables: InputValues{
@@ -2840,6 +2850,12 @@ resource "test_resource" "a" {
 	})
 
 	t.Run("precondition fail refresh-only", func(t *testing.T) {
+		ctx := testContext2(t, &ContextOpts{
+			Providers: map[addrs.Provider]providers.Factory{
+				addrs.NewDefaultProvider("test"): testProviderFuncFixed(p),
+			},
+		})
+
 		state := states.BuildState(func(s *states.SyncState) {
 			s.SetResourceInstanceCurrent(mustResourceInstanceAddr("test_resource.a"), &states.ResourceInstanceObjectSrc{
 				AttrsJSON: []byte(`{"value":"boop","output":"blorp"}`),
@@ -2868,6 +2884,12 @@ resource "test_resource" "a" {
 	})
 
 	t.Run("postcondition fail", func(t *testing.T) {
+		ctx := testContext2(t, &ContextOpts{
+			Providers: map[addrs.Provider]providers.Factory{
+				addrs.NewDefaultProvider("test"): testProviderFuncFixed(p),
+			},
+		})
+
 		p.PlanResourceChangeFn = func(req providers.PlanResourceChangeRequest) (resp providers.PlanResourceChangeResponse) {
 			m := req.ProposedNewState.AsValueMap()
 			m["output"] = cty.StringVal("")
@@ -2897,6 +2919,12 @@ resource "test_resource" "a" {
 	})
 
 	t.Run("postcondition fail refresh-only", func(t *testing.T) {
+		ctx := testContext2(t, &ContextOpts{
+			Providers: map[addrs.Provider]providers.Factory{
+				addrs.NewDefaultProvider("test"): testProviderFuncFixed(p),
+			},
+		})
+
 		state := states.BuildState(func(s *states.SyncState) {
 			s.SetResourceInstanceCurrent(mustResourceInstanceAddr("test_resource.a"), &states.ResourceInstanceObjectSrc{
 				AttrsJSON: []byte(`{"value":"boop","output":"blorp"}`),
@@ -2944,6 +2972,12 @@ resource "test_resource" "a" {
 	})
 
 	t.Run("precondition and postcondition fail refresh-only", func(t *testing.T) {
+		ctx := testContext2(t, &ContextOpts{
+			Providers: map[addrs.Provider]providers.Factory{
+				addrs.NewDefaultProvider("test"): testProviderFuncFixed(p),
+			},
+		})
+
 		state := states.BuildState(func(s *states.SyncState) {
 			s.SetResourceInstanceCurrent(mustResourceInstanceAddr("test_resource.a"), &states.ResourceInstanceObjectSrc{
 				AttrsJSON: []byte(`{"value":"boop","output":"blorp"}`),
@@ -3053,13 +3087,12 @@ resource "test_resource" "a" {
 		},
 	})
 
-	ctx := testContext2(t, &ContextOpts{
-		Providers: map[addrs.Provider]providers.Factory{
-			addrs.NewDefaultProvider("test"): testProviderFuncFixed(p),
-		},
-	})
-
 	t.Run("conditions pass", func(t *testing.T) {
+		ctx := testContext2(t, &ContextOpts{
+			Providers: map[addrs.Provider]providers.Factory{
+				addrs.NewDefaultProvider("test"): testProviderFuncFixed(p),
+			},
+		})
 		p.ReadDataSourceResponse = &providers.ReadDataSourceResponse{
 			State: cty.ObjectVal(map[string]cty.Value{
 				"foo":     cty.StringVal("boop"),
@@ -3105,6 +3138,11 @@ resource "test_resource" "a" {
 	})
 
 	t.Run("precondition fail", func(t *testing.T) {
+		ctx := testContext2(t, &ContextOpts{
+			Providers: map[addrs.Provider]providers.Factory{
+				addrs.NewDefaultProvider("test"): testProviderFuncFixed(p),
+			},
+		})
 		_, diags := ctx.Plan(m, states.NewState(), &PlanOpts{
 			Mode: plans.NormalMode,
 			SetVariables: InputValues{
@@ -3126,6 +3164,11 @@ resource "test_resource" "a" {
 	})
 
 	t.Run("precondition fail refresh-only", func(t *testing.T) {
+		ctx := testContext2(t, &ContextOpts{
+			Providers: map[addrs.Provider]providers.Factory{
+				addrs.NewDefaultProvider("test"): testProviderFuncFixed(p),
+			},
+		})
 		plan, diags := ctx.Plan(m, states.NewState(), &PlanOpts{
 			Mode: plans.RefreshOnlyMode,
 			SetVariables: InputValues{
@@ -3159,6 +3202,11 @@ resource "test_resource" "a" {
 	})
 
 	t.Run("postcondition fail", func(t *testing.T) {
+		ctx := testContext2(t, &ContextOpts{
+			Providers: map[addrs.Provider]providers.Factory{
+				addrs.NewDefaultProvider("test"): testProviderFuncFixed(p),
+			},
+		})
 		p.ReadDataSourceResponse = &providers.ReadDataSourceResponse{
 			State: cty.ObjectVal(map[string]cty.Value{
 				"foo":     cty.StringVal("boop"),
@@ -3186,6 +3234,11 @@ resource "test_resource" "a" {
 	})
 
 	t.Run("postcondition fail refresh-only", func(t *testing.T) {
+		ctx := testContext2(t, &ContextOpts{
+			Providers: map[addrs.Provider]providers.Factory{
+				addrs.NewDefaultProvider("test"): testProviderFuncFixed(p),
+			},
+		})
 		p.ReadDataSourceResponse = &providers.ReadDataSourceResponse{
 			State: cty.ObjectVal(map[string]cty.Value{
 				"foo":     cty.StringVal("boop"),
@@ -3222,6 +3275,11 @@ resource "test_resource" "a" {
 	})
 
 	t.Run("precondition and postcondition fail refresh-only", func(t *testing.T) {
+		ctx := testContext2(t, &ContextOpts{
+			Providers: map[addrs.Provider]providers.Factory{
+				addrs.NewDefaultProvider("test"): testProviderFuncFixed(p),
+			},
+		})
 		p.ReadDataSourceResponse = &providers.ReadDataSourceResponse{
 			State: cty.ObjectVal(map[string]cty.Value{
 				"foo":     cty.StringVal("nope"),
@@ -4540,6 +4598,237 @@ import {
 	}
 }
 
+func TestContext2Plan_importIdVariable(t *testing.T) {
+	p := testProvider("aws")
+	m := testModule(t, "import-id-variable")
+	ctx := testContext2(t, &ContextOpts{
+		Providers: map[addrs.Provider]providers.Factory{
+			addrs.NewDefaultProvider("aws"): testProviderFuncFixed(p),
+		},
+	})
+
+	p.ImportResourceStateResponse = &providers.ImportResourceStateResponse{
+		ImportedResources: []providers.ImportedResource{
+			{
+				TypeName: "aws_instance",
+				State: cty.ObjectVal(map[string]cty.Value{
+					"id": cty.StringVal("foo"),
+				}),
+			},
+		},
+	}
+
+	_, diags := ctx.Plan(m, states.NewState(), &PlanOpts{
+		SetVariables: InputValues{
+			"the_id": &InputValue{
+				// let var take its default value
+				Value: cty.NilVal,
+			},
+		},
+	})
+	if diags.HasErrors() {
+		t.Fatalf("unexpected errors: %s", diags.Err())
+	}
+}
+
+func TestContext2Plan_importIdFunc(t *testing.T) {
+	p := testProvider("aws")
+	m := testModule(t, "import-id-func")
+	ctx := testContext2(t, &ContextOpts{
+		Providers: map[addrs.Provider]providers.Factory{
+			addrs.NewDefaultProvider("aws"): testProviderFuncFixed(p),
+		},
+	})
+
+	p.ImportResourceStateResponse = &providers.ImportResourceStateResponse{
+		ImportedResources: []providers.ImportedResource{
+			{
+				TypeName: "aws_instance",
+				State: cty.ObjectVal(map[string]cty.Value{
+					"id": cty.StringVal("foo"),
+				}),
+			},
+		},
+	}
+
+	_, diags := ctx.Plan(m, states.NewState(), DefaultPlanOpts)
+	if diags.HasErrors() {
+		t.Fatalf("unexpected errors: %s", diags.Err())
+	}
+}
+
+func TestContext2Plan_importIdDataSource(t *testing.T) {
+	p := testProvider("aws")
+	m := testModule(t, "import-id-data-source")
+
+	p.GetProviderSchemaResponse = getProviderSchemaResponseFromProviderSchema(&ProviderSchema{
+		ResourceTypes: map[string]*configschema.Block{
+			"aws_subnet": {
+				Attributes: map[string]*configschema.Attribute{
+					"id": {
+						Type:     cty.String,
+						Computed: true,
+					},
+				},
+			},
+		},
+		DataSources: map[string]*configschema.Block{
+			"aws_subnet": {
+				Attributes: map[string]*configschema.Attribute{
+					"vpc_id": {
+						Type:     cty.String,
+						Required: true,
+					},
+					"cidr_block": {
+						Type:     cty.String,
+						Computed: true,
+					},
+					"id": {
+						Type:     cty.String,
+						Computed: true,
+					},
+				},
+			},
+		},
+	})
+	p.ReadDataSourceResponse = &providers.ReadDataSourceResponse{
+		State: cty.ObjectVal(map[string]cty.Value{
+			"vpc_id":     cty.StringVal("abc"),
+			"cidr_block": cty.StringVal("10.0.1.0/24"),
+			"id":         cty.StringVal("123"),
+		}),
+	}
+	p.ImportResourceStateResponse = &providers.ImportResourceStateResponse{
+		ImportedResources: []providers.ImportedResource{
+			{
+				TypeName: "aws_subnet",
+				State: cty.ObjectVal(map[string]cty.Value{
+					"id": cty.StringVal("foo"),
+				}),
+			},
+		},
+	}
+	ctx := testContext2(t, &ContextOpts{
+		Providers: map[addrs.Provider]providers.Factory{
+			addrs.NewDefaultProvider("aws"): testProviderFuncFixed(p),
+		},
+	})
+
+	_, diags := ctx.Plan(m, states.NewState(), DefaultPlanOpts)
+	if diags.HasErrors() {
+		t.Fatalf("unexpected errors: %s", diags.Err())
+	}
+}
+
+func TestContext2Plan_importIdModule(t *testing.T) {
+	p := testProvider("aws")
+	m := testModule(t, "import-id-module")
+
+	p.GetProviderSchemaResponse = getProviderSchemaResponseFromProviderSchema(&ProviderSchema{
+		ResourceTypes: map[string]*configschema.Block{
+			"aws_lb": {
+				Attributes: map[string]*configschema.Attribute{
+					"id": {
+						Type:     cty.String,
+						Computed: true,
+					},
+				},
+			},
+		},
+	})
+	p.ImportResourceStateResponse = &providers.ImportResourceStateResponse{
+		ImportedResources: []providers.ImportedResource{
+			{
+				TypeName: "aws_lb",
+				State: cty.ObjectVal(map[string]cty.Value{
+					"id": cty.StringVal("foo"),
+				}),
+			},
+		},
+	}
+	ctx := testContext2(t, &ContextOpts{
+		Providers: map[addrs.Provider]providers.Factory{
+			addrs.NewDefaultProvider("aws"): testProviderFuncFixed(p),
+		},
+	})
+
+	_, diags := ctx.Plan(m, states.NewState(), DefaultPlanOpts)
+	if diags.HasErrors() {
+		t.Fatalf("unexpected errors: %s", diags.Err())
+	}
+}
+
+func TestContext2Plan_importIdInvalidNull(t *testing.T) {
+	p := testProvider("test")
+	m := testModule(t, "import-id-invalid-null")
+	ctx := testContext2(t, &ContextOpts{
+		Providers: map[addrs.Provider]providers.Factory{
+			addrs.NewDefaultProvider("test"): testProviderFuncFixed(p),
+		},
+	})
+
+	_, diags := ctx.Plan(m, states.NewState(), &PlanOpts{
+		SetVariables: InputValues{
+			"the_id": &InputValue{
+				Value: cty.NullVal(cty.String),
+			},
+		},
+	})
+	if !diags.HasErrors() {
+		t.Fatal("succeeded; want errors")
+	}
+	if got, want := diags.Err().Error(), "The import ID cannot be null"; !strings.Contains(got, want) {
+		t.Fatalf("wrong error:\ngot:  %s\nwant: message containing %q", got, want)
+	}
+}
+
+func TestContext2Plan_importIdInvalidUnknown(t *testing.T) {
+	p := testProvider("test")
+	m := testModule(t, "import-id-invalid-unknown")
+	ctx := testContext2(t, &ContextOpts{
+		Providers: map[addrs.Provider]providers.Factory{
+			addrs.NewDefaultProvider("test"): testProviderFuncFixed(p),
+		},
+	})
+	p.GetProviderSchemaResponse = getProviderSchemaResponseFromProviderSchema(&ProviderSchema{
+		ResourceTypes: map[string]*configschema.Block{
+			"test_resource": {
+				Attributes: map[string]*configschema.Attribute{
+					"id": {
+						Type:     cty.String,
+						Computed: true,
+					},
+				},
+			},
+		},
+	})
+	p.PlanResourceChangeFn = func(req providers.PlanResourceChangeRequest) providers.PlanResourceChangeResponse {
+		return providers.PlanResourceChangeResponse{
+			PlannedState: cty.UnknownVal(cty.Object(map[string]cty.Type{
+				"id": cty.String,
+			})),
+		}
+	}
+	p.ImportResourceStateResponse = &providers.ImportResourceStateResponse{
+		ImportedResources: []providers.ImportedResource{
+			{
+				TypeName: "test_resource",
+				State: cty.ObjectVal(map[string]cty.Value{
+					"id": cty.StringVal("foo"),
+				}),
+			},
+		},
+	}
+
+	_, diags := ctx.Plan(m, states.NewState(), DefaultPlanOpts)
+	if !diags.HasErrors() {
+		t.Fatal("succeeded; want errors")
+	}
+	if got, want := diags.Err().Error(), `The import block "id" argument depends on resource attributes that cannot be determined until apply`; !strings.Contains(got, want) {
+		t.Fatalf("wrong error:\ngot:  %s\nwant: message containing %q", got, want)
+	}
+}
+
 func TestContext2Plan_importIntoModuleWithGeneratedConfig(t *testing.T) {
 	m := testModuleInline(t, map[string]string{
 		"main.tf": `
@@ -4886,5 +5175,56 @@ import {
 	got := instPlan.GeneratedConfig
 	if diff := cmp.Diff(want, got); len(diff) > 0 {
 		t.Errorf("got:\n%s\nwant:\n%s\ndiff:\n%s", got, want, diff)
+	}
+}
+
+func TestContext2Plan_plannedState(t *testing.T) {
+	addr := mustResourceInstanceAddr("test_object.a")
+	m := testModuleInline(t, map[string]string{
+		"main.tf": `
+resource "test_object" "a" {
+	test_string = "foo"
+}
+
+locals {
+  local_value = test_object.a.test_string
+}
+`,
+	})
+
+	p := simpleMockProvider()
+	ctx := testContext2(t, &ContextOpts{
+		Providers: map[addrs.Provider]providers.Factory{
+			addrs.NewDefaultProvider("test"): testProviderFuncFixed(p),
+		},
+	})
+
+	state := states.NewState()
+	plan, diags := ctx.Plan(m, state, nil)
+	if diags.HasErrors() {
+		t.Errorf("expected no errors, but got %s", diags)
+	}
+
+	module := state.RootModule()
+
+	// So, the original state shouldn't have been updated at all.
+	if len(module.LocalValues) > 0 {
+		t.Errorf("expected no local values in the state but found %d", len(module.LocalValues))
+	}
+
+	if len(module.Resources) > 0 {
+		t.Errorf("expected no resources in the state but found %d", len(module.LocalValues))
+	}
+
+	// But, this makes it hard for the testing framework to valid things about
+	// the returned plan. So, the plan contains the planned state:
+	module = plan.PlannedState.RootModule()
+
+	if module.LocalValues["local_value"].AsString() != "foo" {
+		t.Errorf("expected local value to be \"foo\" but was \"%s\"", module.LocalValues["local_value"].AsString())
+	}
+
+	if module.ResourceInstance(addr.Resource).Current.Status != states.ObjectPlanned {
+		t.Errorf("expected resource to be in planned state")
 	}
 }

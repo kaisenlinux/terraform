@@ -1,5 +1,5 @@
 // Copyright (c) HashiCorp, Inc.
-// SPDX-License-Identifier: MPL-2.0
+// SPDX-License-Identifier: BUSL-1.1
 
 package jsonstate
 
@@ -174,13 +174,11 @@ func Marshal(sf *statefile.File, schemas *terraform.Schemas) ([]byte, error) {
 	if sf.TerraformVersion != nil {
 		output.TerraformVersion = sf.TerraformVersion.String()
 	}
-
 	// output.StateValues
 	err := output.marshalStateValues(sf.State, schemas)
 	if err != nil {
 		return nil, err
 	}
-
 	// output.Checks
 	if sf.State.CheckResults != nil && sf.State.CheckResults.ConfigResults.Len() > 0 {
 		output.Checks = jsonchecks.MarshalCheckStates(sf.State.CheckResults)

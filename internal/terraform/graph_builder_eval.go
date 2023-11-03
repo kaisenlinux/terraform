@@ -1,5 +1,5 @@
 // Copyright (c) HashiCorp, Inc.
-// SPDX-License-Identifier: MPL-2.0
+// SPDX-License-Identifier: BUSL-1.1
 
 package terraform
 
@@ -67,8 +67,8 @@ func (b *EvalGraphBuilder) Steps() []GraphTransformer {
 		},
 
 		// Add dynamic values
-		&RootVariableTransformer{Config: b.Config, RawValues: b.RootVariableValues},
-		&ModuleVariableTransformer{Config: b.Config},
+		&RootVariableTransformer{Config: b.Config, RawValues: b.RootVariableValues, Planning: true},
+		&ModuleVariableTransformer{Config: b.Config, Planning: true},
 		&LocalTransformer{Config: b.Config},
 		&OutputTransformer{
 			Config:   b.Config,

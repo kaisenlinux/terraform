@@ -1,5 +1,5 @@
 // Copyright (c) HashiCorp, Inc.
-// SPDX-License-Identifier: MPL-2.0
+// SPDX-License-Identifier: BUSL-1.1
 
 package terraform
 
@@ -2160,5 +2160,167 @@ import {
 	}
 	if addr, wantAddr := hook.PostApplyImportAddr, mustResourceInstanceAddr("test_resource.a"); !addr.Equal(wantAddr) {
 		t.Errorf("expected addr to be %s, but was %s", wantAddr, addr)
+	}
+}
+
+func TestContext2Apply_destroySkipsVariableValidations(t *testing.T) {
+	m := testModuleInline(t, map[string]string{
+		"main.tf": `
+variable "input" {
+	type = string
+
+	validation {
+        condition = var.input == "foo"
+        error_message = "bad input"
+    }
+}
+
+resource "test_object" "a" {
+	test_string = var.input
+}
+`,
+	})
+
+	p := simpleMockProvider()
+	ctx := testContext2(t, &ContextOpts{
+		Providers: map[addrs.Provider]providers.Factory{
+			addrs.NewDefaultProvider("test"): testProviderFuncFixed(p),
+		},
+	})
+
+	plan, diags := ctx.Plan(m, states.BuildState(func(state *states.SyncState) {
+		state.SetResourceInstanceCurrent(
+			mustResourceInstanceAddr("test_object.a"),
+			&states.ResourceInstanceObjectSrc{
+				Status:    states.ObjectReady,
+				AttrsJSON: []byte(`{"test_string":"foo"}`),
+			},
+			mustProviderConfig(`provider["registry.terraform.io/hashicorp/test"]`),
+		)
+	}), &PlanOpts{
+		Mode: plans.DestroyMode,
+		SetVariables: InputValues{
+			"input": {
+				Value:       cty.StringVal("foo"),
+				SourceType:  ValueFromCLIArg,
+				SourceRange: tfdiags.SourceRange{},
+			},
+		},
+	})
+	if diags.HasErrors() {
+		t.Errorf("expected no errors, but got %s", diags)
+	}
+
+	planResult := plan.Checks.GetObjectResult(addrs.AbsInputVariableInstance{
+		Variable: addrs.InputVariable{
+			Name: "input",
+		},
+		Module: addrs.RootModuleInstance,
+	})
+
+	if planResult.Status != checks.StatusPass {
+		// Should have passed during the planning stage indicating that it did
+		// actually execute.
+		t.Errorf("expected checks to be pass but was %s", planResult.Status)
+	}
+
+	state, diags := ctx.Apply(plan, m)
+	if diags.HasErrors() {
+		t.Errorf("expected no errors, but got %s", diags)
+	}
+
+	applyResult := state.CheckResults.GetObjectResult(addrs.AbsInputVariableInstance{
+		Variable: addrs.InputVariable{
+			Name: "input",
+		},
+		Module: addrs.RootModuleInstance,
+	})
+
+	if applyResult.Status != checks.StatusUnknown {
+		// Shouldn't have made any validations here, so result should have
+		// stayed as unknown.
+		t.Errorf("expected checks to be unknown but was %s", applyResult.Status)
+	}
+}
+
+func TestContext2Apply_noExternalReferences(t *testing.T) {
+	m := testModuleInline(t, map[string]string{
+		"main.tf": `
+resource "test_object" "a" {
+	test_string = "foo"
+}
+
+locals {
+  local_value = test_object.a.test_string
+}
+`,
+	})
+
+	p := simpleMockProvider()
+	ctx := testContext2(t, &ContextOpts{
+		Providers: map[addrs.Provider]providers.Factory{
+			addrs.NewDefaultProvider("test"): testProviderFuncFixed(p),
+		},
+	})
+
+	plan, diags := ctx.Plan(m, states.NewState(), nil)
+	if diags.HasErrors() {
+		t.Errorf("expected no errors, but got %s", diags)
+	}
+
+	state, diags := ctx.Apply(plan, m)
+	if diags.HasErrors() {
+		t.Errorf("expected no errors, but got %s", diags)
+	}
+
+	// We didn't specify any external references, so the unreferenced local
+	// value should have been tidied up and never made it into the state.
+	module := state.RootModule()
+	if len(module.LocalValues) > 0 {
+		t.Errorf("expected no local values in the state but found %d", len(module.LocalValues))
+	}
+}
+
+func TestContext2Apply_withExternalReferences(t *testing.T) {
+	m := testModuleInline(t, map[string]string{
+		"main.tf": `
+resource "test_object" "a" {
+	test_string = "foo"
+}
+
+locals {
+  local_value = test_object.a.test_string
+}
+`,
+	})
+
+	p := simpleMockProvider()
+	ctx := testContext2(t, &ContextOpts{
+		Providers: map[addrs.Provider]providers.Factory{
+			addrs.NewDefaultProvider("test"): testProviderFuncFixed(p),
+		},
+	})
+
+	plan, diags := ctx.Plan(m, states.NewState(), &PlanOpts{
+		Mode: plans.NormalMode,
+		ExternalReferences: []*addrs.Reference{
+			mustReference("local.local_value"),
+		},
+	})
+	if diags.HasErrors() {
+		t.Errorf("expected no errors, but got %s", diags)
+	}
+
+	state, diags := ctx.Apply(plan, m)
+	if diags.HasErrors() {
+		t.Errorf("expected no errors, but got %s", diags)
+	}
+
+	// We did specify the local value in the external references, so it should
+	// have been preserved even though it is not referenced by anything directly
+	// in the config.
+	module := state.RootModule()
+	if module.LocalValues["local_value"].AsString() != "foo" {
+		t.Errorf("expected local value to be \"foo\" but was \"%s\"", module.LocalValues["local_value"].AsString())
 	}
 }

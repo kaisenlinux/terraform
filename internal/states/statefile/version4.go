@@ -1,5 +1,5 @@
 // Copyright (c) HashiCorp, Inc.
-// SPDX-License-Identifier: MPL-2.0
+// SPDX-License-Identifier: BUSL-1.1
 
 package statefile
 
@@ -525,7 +525,11 @@ func decodeCheckResultsV4(in []checkResultsV4) (*states.CheckResults, tfdiags.Di
 	for _, aggrIn := range in {
 		objectKind := decodeCheckableObjectKindV4(aggrIn.ObjectKind)
 		if objectKind == addrs.CheckableKindInvalid {
-			diags = diags.Append(fmt.Errorf("unsupported checkable object kind %q", aggrIn.ObjectKind))
+			// We cannot decode a future unknown check result kind, but
+			// for forwards compatibility we need not treat this as an
+			// error. Eliding unknown check results will not result in
+			// significant data loss and allows us to maintain state file
+			// interoperability in the 1.x series.
 			continue
 		}
 
@@ -585,6 +589,19 @@ func encodeCheckResultsV4(in *states.CheckResults) []checkResultsV4 {
 	ret := make([]checkResultsV4, 0, in.ConfigResults.Len())
 
 	for _, configElem := range in.ConfigResults.Elems {
+
+		if configElem.Key.CheckableKind() == addrs.CheckableInputVariable {
+			// For the remainder of the v1.6 series we should not output
+			// checkable input variables into the state file.
+			//
+			// This is to work around the issues in earlier releases that was
+			// fixed by https://github.com/hashicorp/terraform/pull/33813.
+			//
+			// The aim here is to give people more time to upgrade before we
+			// make the latest version incompatible with earlier versions.
+			continue
+		}
+
 		configResultsOut := checkResultsV4{
 			ObjectKind: encodeCheckableObjectKindV4(configElem.Key.CheckableKind()),
 			ConfigAddr: configElem.Key.String(),
@@ -643,6 +660,8 @@ func decodeCheckableObjectKindV4(in string) addrs.CheckableKind {
 		return addrs.CheckableOutputValue
 	case "check":
 		return addrs.CheckableCheck
+	case "var":
+		return addrs.CheckableInputVariable
 	default:
 		// We'll treat anything else as invalid just as a concession to
 		// forward-compatible parsing, in case a later version of Terraform
@@ -659,6 +678,8 @@ func encodeCheckableObjectKindV4(in addrs.CheckableKind) string {
 		return "output"
 	case addrs.CheckableCheck:
 		return "check"
+	case addrs.CheckableInputVariable:
+		return "var"
 	default:
 		panic(fmt.Sprintf("unsupported checkable object kind %s", in))
 	}

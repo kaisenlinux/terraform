@@ -25,7 +25,7 @@
       ]
     }
   },
-  "format_version": "1.2",
+  "format_version": "1.1",
   "planned_values": {
     "root_module": {
       "resources": [
@@ -111,6 +111,5 @@
       "provider_name": "registry.terraform.io/hashicorp/tfcoremock",
       "type": "tfcoremock_list"
     }
-  ],
-  "timestamp": "2023-05-25T07:34:51Z"
+  ]
 }

@@ -1,5 +1,5 @@
 // Copyright (c) HashiCorp, Inc.
-// SPDX-License-Identifier: MPL-2.0
+// SPDX-License-Identifier: BUSL-1.1
 
 package terraform
 
@@ -13,13 +13,15 @@ import (
 	"github.com/hashicorp/terraform/internal/addrs"
 	"github.com/hashicorp/terraform/internal/configs/configschema"
 	"github.com/hashicorp/terraform/internal/lang"
+	"github.com/hashicorp/terraform/internal/providers"
 )
 
 func TestStaticValidateReferences(t *testing.T) {
 	tests := []struct {
-		Ref     string
-		Src     addrs.Referenceable
-		WantErr string
+		Ref      string
+		Src      addrs.Referenceable
+		ParseRef lang.ParseRef
+		WantErr  string
 	}{
 		{
 			Ref:     "aws_instance.no_count",
@@ -78,28 +80,43 @@ For example, to correlate with indices of a referring resource, use:
 			WantErr: ``,
 			Src:     addrs.Check{Name: "foo"},
 		},
+		{
+			Ref:     "run.zero",
+			WantErr: `Reference to undeclared resource: A managed resource "run" "zero" has not been declared in the root module.`,
+		},
+		{
+			Ref:      "run.zero",
+			ParseRef: addrs.ParseRefFromTestingScope,
+			WantErr:  `Reference to unavailable run block: The run block named "zero" is not available, either it does not exist or has not yet been executed.`,
+		},
 	}
 
 	cfg := testModule(t, "static-validate-refs")
 	evaluator := &Evaluator{
 		Config: cfg,
-		Plugins: schemaOnlyProvidersForTesting(map[addrs.Provider]*ProviderSchema{
+		Plugins: schemaOnlyProvidersForTesting(map[addrs.Provider]providers.ProviderSchema{
 			addrs.NewDefaultProvider("aws"): {
-				ResourceTypes: map[string]*configschema.Block{
-					"aws_instance": {},
+				ResourceTypes: map[string]providers.Schema{
+					"aws_instance": {
+						Block: &configschema.Block{},
+					},
 				},
 			},
 			addrs.MustParseProviderSourceString("foobar/beep"): {
-				ResourceTypes: map[string]*configschema.Block{
+				ResourceTypes: map[string]providers.Schema{
 					// intentional mismatch between resource type prefix and provider type
-					"boop_instance": {},
+					"boop_instance": {
+						Block: &configschema.Block{},
+					},
 				},
-				DataSources: map[string]*configschema.Block{
+				DataSources: map[string]providers.Schema{
 					"boop_data": {
-						Attributes: map[string]*configschema.Attribute{
-							"id": {
-								Type:     cty.String,
-								Optional: true,
+						Block: &configschema.Block{
+							Attributes: map[string]*configschema.Attribute{
+								"id": {
+									Type:     cty.String,
+									Optional: true,
+								},
 							},
 						},
 					},
@@ -115,7 +132,12 @@ For example, to correlate with indices of a referring resource, use:
 				t.Fatal(hclDiags.Error())
 			}
 
-			refs, diags := lang.References([]hcl.Traversal{traversal})
+			parseRef := addrs.ParseRef
+			if test.ParseRef != nil {
+				parseRef = test.ParseRef
+			}
+
+			refs, diags := lang.References(parseRef, []hcl.Traversal{traversal})
 			if diags.HasErrors() {
 				t.Fatal(diags.Err())
 			}

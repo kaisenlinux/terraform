@@ -30,7 +30,7 @@
       ]
     }
   },
-  "format_version": "1.2",
+  "format_version": "1.1",
   "planned_values": {
     "root_module": {
       "resources": [
@@ -66,9 +66,7 @@
             "name": "local_file",
             "provider_name": "registry.terraform.io/hashicorp/local",
             "schema_version": 0,
-            "sensitive_values": {
-              "sensitive_content": true
-            },
+            "sensitive_values": {},
             "type": "local_file",
             "values": {
               "content": "{\"hello\":\"world\"}",
@@ -133,6 +131,5 @@
       "provider_name": "registry.terraform.io/hashicorp/local",
       "type": "local_file"
     }
-  ],
-  "timestamp": "2023-05-25T07:35:35Z"
+  ]
 }

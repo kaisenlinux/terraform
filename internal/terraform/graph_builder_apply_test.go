@@ -1,5 +1,5 @@
 // Copyright (c) HashiCorp, Inc.
-// SPDX-License-Identifier: MPL-2.0
+// SPDX-License-Identifier: BUSL-1.1
 
 package terraform
 
@@ -467,12 +467,12 @@ func TestApplyGraphBuilder_updateFromOrphan(t *testing.T) {
 		cty.ObjectVal(map[string]cty.Value{
 			"id":          cty.StringVal("b_id"),
 			"test_string": cty.StringVal("a_id"),
-		}), instanceSchema.ImpliedType())
+		}), instanceSchema.Block.ImpliedType())
 	bAfter, _ := plans.NewDynamicValue(
 		cty.ObjectVal(map[string]cty.Value{
 			"id":          cty.StringVal("b_id"),
 			"test_string": cty.StringVal("changed"),
-		}), instanceSchema.ImpliedType())
+		}), instanceSchema.Block.ImpliedType())
 
 	changes := &plans.Changes{
 		Resources: []*plans.ResourceInstanceChangeSrc{
@@ -572,12 +572,12 @@ func TestApplyGraphBuilder_updateFromCBDOrphan(t *testing.T) {
 		cty.ObjectVal(map[string]cty.Value{
 			"id":          cty.StringVal("b_id"),
 			"test_string": cty.StringVal("a_id"),
-		}), instanceSchema.ImpliedType())
+		}), instanceSchema.Block.ImpliedType())
 	bAfter, _ := plans.NewDynamicValue(
 		cty.ObjectVal(map[string]cty.Value{
 			"id":          cty.StringVal("b_id"),
 			"test_string": cty.StringVal("changed"),
-		}), instanceSchema.ImpliedType())
+		}), instanceSchema.Block.ImpliedType())
 
 	changes := &plans.Changes{
 		Resources: []*plans.ResourceInstanceChangeSrc{
@@ -766,9 +766,8 @@ const testPlanWithCheckGraphBuilderStr = `
   aws_instance.baz
 aws_instance.baz
   aws_instance.baz (expand)
-  aws_instance.foo
 aws_instance.baz (expand)
-  provider["registry.terraform.io/hashicorp/aws"]
+  aws_instance.foo
 aws_instance.foo
   aws_instance.foo (expand)
 aws_instance.foo (expand)
@@ -798,11 +797,9 @@ module.child.test_object.create (expand)
   module.child (expand)
   provider["registry.terraform.io/hashicorp/test"]
 module.child.test_object.other
-  module.child.test_object.create
   module.child.test_object.other (expand)
 module.child.test_object.other (expand)
-  module.child (expand)
-  provider["registry.terraform.io/hashicorp/test"]
+  module.child.test_object.create
 provider["registry.terraform.io/hashicorp/test"]
 provider["registry.terraform.io/hashicorp/test"] (close)
   module.child.test_object.other
@@ -815,10 +812,9 @@ test_object.create
 test_object.create (expand)
   provider["registry.terraform.io/hashicorp/test"]
 test_object.other
-  test_object.create
   test_object.other (expand)
 test_object.other (expand)
-  provider["registry.terraform.io/hashicorp/test"]
+  test_object.create
 `
 
 const testApplyGraphBuilderDestroyCountStr = `
@@ -832,9 +828,8 @@ test_object.A (expand)
 test_object.A[1] (destroy)
   provider["registry.terraform.io/hashicorp/test"]
 test_object.B
-  test_object.A (expand)
   test_object.A[1] (destroy)
   test_object.B (expand)
 test_object.B (expand)
-  provider["registry.terraform.io/hashicorp/test"]
+  test_object.A (expand)
 `

@@ -1,5 +1,5 @@
 // Copyright (c) HashiCorp, Inc.
-// SPDX-License-Identifier: MPL-2.0
+// SPDX-License-Identifier: BUSL-1.1
 
 package configs
 
@@ -30,6 +30,22 @@ func (p *Parser) LoadConfigFile(path string) (*File, hcl.Diagnostics) {
 // file as an overrides file.
 func (p *Parser) LoadConfigFileOverride(path string) (*File, hcl.Diagnostics) {
 	return p.loadConfigFile(path, true)
+}
+
+// LoadTestFile reads the file at the given path and parses it as a Terraform
+// test file.
+//
+// It references the same LoadHCLFile as LoadConfigFile, so inherits the same
+// syntax selection behaviours.
+func (p *Parser) LoadTestFile(path string) (*TestFile, hcl.Diagnostics) {
+	body, diags := p.LoadHCLFile(path)
+	if body == nil {
+		return nil, diags
+	}
+
+	test, testDiags := loadTestFile(body)
+	diags = append(diags, testDiags...)
+	return test, diags
 }
 
 func (p *Parser) loadConfigFile(path string, override bool) (*File, hcl.Diagnostics) {

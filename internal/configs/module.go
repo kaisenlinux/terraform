@@ -1,5 +1,5 @@
 // Copyright (c) HashiCorp, Inc.
-// SPDX-License-Identifier: MPL-2.0
+// SPDX-License-Identifier: BUSL-1.1
 
 package configs
 
@@ -53,6 +53,8 @@ type Module struct {
 	Import []*Import
 
 	Checks map[string]*Check
+
+	Tests map[string]*TestFile
 }
 
 // File describes the contents of a single configuration file.
@@ -92,6 +94,16 @@ type File struct {
 	Checks []*Check
 }
 
+// NewModuleWithTests matches NewModule except it will also load in the provided
+// test files.
+func NewModuleWithTests(primaryFiles, overrideFiles []*File, testFiles map[string]*TestFile) (*Module, hcl.Diagnostics) {
+	mod, diags := NewModule(primaryFiles, overrideFiles)
+	if mod != nil {
+		mod.Tests = testFiles
+	}
+	return mod, diags
+}
+
 // NewModule takes a list of primary files and a list of override files and
 // produces a *Module by combining the files together.
 //
@@ -113,6 +125,7 @@ func NewModule(primaryFiles, overrideFiles []*File) (*Module, hcl.Diagnostics) {
 		DataResources:      map[string]*Resource{},
 		Checks:             map[string]*Check{},
 		ProviderMetas:      map[addrs.Provider]*ProviderMeta{},
+		Tests:              map[string]*TestFile{},
 	}
 
 	// Process the required_providers blocks first, to ensure that all
@@ -444,7 +457,7 @@ func (m *Module) appendFile(file *File) hcl.Diagnostics {
 				diags = append(diags, &hcl.Diagnostic{
 					Severity: hcl.DiagError,
 					Summary:  "Cannot import to a move source",
-					Detail:   "An import block for ID %q targets resource address %s, but this address appears in the \"from\" argument of a moved block, which is invalid. Please change the import target to a different address, such as the move target.",
+					Detail:   fmt.Sprintf("An import block for ID %q targets resource address %s, but this address appears in the \"from\" argument of a moved block, which is invalid. Please change the import target to a different address, such as the move target.", i.ID, i.To),
 					Subject:  &i.DeclRange,
 				})
 			}

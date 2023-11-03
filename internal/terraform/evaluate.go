@@ -1,5 +1,5 @@
 // Copyright (c) HashiCorp, Inc.
-// SPDX-License-Identifier: MPL-2.0
+// SPDX-License-Identifier: BUSL-1.1
 
 package terraform
 
@@ -11,13 +11,13 @@ import (
 	"sync"
 	"time"
 
-	"github.com/agext/levenshtein"
 	"github.com/hashicorp/hcl/v2"
 	"github.com/zclconf/go-cty/cty"
 
 	"github.com/hashicorp/terraform/internal/addrs"
 	"github.com/hashicorp/terraform/internal/configs"
 	"github.com/hashicorp/terraform/internal/configs/configschema"
+	"github.com/hashicorp/terraform/internal/didyoumean"
 	"github.com/hashicorp/terraform/internal/instances"
 	"github.com/hashicorp/terraform/internal/lang"
 	"github.com/hashicorp/terraform/internal/lang/marks"
@@ -65,6 +65,13 @@ type Evaluator struct {
 	// ensures they can be safely accessed and modified concurrently.
 	Changes *plans.ChangesSync
 
+	// AlternateStates allows callers to reference states from outside this
+	// evaluator.
+	//
+	// The main use case here is for the testing framework to call into other
+	// run blocks.
+	AlternateStates map[string]*evaluationStateData
+
 	PlanTimestamp time.Time
 }
 
@@ -77,6 +84,7 @@ type Evaluator struct {
 func (e *Evaluator) Scope(data lang.Data, self addrs.Referenceable, source addrs.Referenceable) *lang.Scope {
 	return &lang.Scope{
 		Data:          data,
+		ParseRef:      addrs.ParseRef,
 		SelfAddr:      self,
 		SourceAddr:    source,
 		PureOnly:      e.Operation != walkApply && e.Operation != walkDestroy && e.Operation != walkEval,
@@ -229,7 +237,7 @@ func (d *evaluationStateData) GetInputVariable(addr addrs.InputVariable, rng tfd
 		for k := range moduleConfig.Module.Variables {
 			suggestions = append(suggestions, k)
 		}
-		suggestion := nameSuggestion(addr.Name, suggestions)
+		suggestion := didyoumean.NameSuggestion(addr.Name, suggestions)
 		if suggestion != "" {
 			suggestion = fmt.Sprintf(" Did you mean %q?", suggestion)
 		} else {
@@ -325,7 +333,7 @@ func (d *evaluationStateData) GetLocalValue(addr addrs.LocalValue, rng tfdiags.S
 		for k := range moduleConfig.Module.Locals {
 			suggestions = append(suggestions, k)
 		}
-		suggestion := nameSuggestion(addr.Name, suggestions)
+		suggestion := didyoumean.NameSuggestion(addr.Name, suggestions)
 		if suggestion != "" {
 			suggestion = fmt.Sprintf(" Did you mean %q?", suggestion)
 		}
@@ -624,7 +632,7 @@ func (d *evaluationStateData) GetPathAttr(addr addrs.PathAttr, rng tfdiags.Sourc
 		return cty.StringVal(filepath.ToSlash(sourceDir)), diags
 
 	default:
-		suggestion := nameSuggestion(addr.Name, []string{"cwd", "module", "root"})
+		suggestion := didyoumean.NameSuggestion(addr.Name, []string{"cwd", "module", "root"})
 		if suggestion != "" {
 			suggestion = fmt.Sprintf(" Did you mean %q?", suggestion)
 		}
@@ -940,23 +948,103 @@ func (d *evaluationStateData) GetTerraformAttr(addr addrs.TerraformAttr, rng tfd
 	}
 }
 
-// nameSuggestion tries to find a name from the given slice of suggested names
-// that is close to the given name and returns it if found. If no suggestion
-// is close enough, returns the empty string.
-//
-// The suggestions are tried in order, so earlier suggestions take precedence
-// if the given string is similar to two or more suggestions.
-//
-// This function is intended to be used with a relatively-small number of
-// suggestions. It's not optimized for hundreds or thousands of them.
-func nameSuggestion(given string, suggestions []string) string {
-	for _, suggestion := range suggestions {
-		dist := levenshtein.Distance(given, suggestion, nil)
-		if dist < 3 { // threshold determined experimentally
-			return suggestion
-		}
+func (d *evaluationStateData) GetOutput(addr addrs.OutputValue, rng tfdiags.SourceRange) (cty.Value, tfdiags.Diagnostics) {
+	var diags tfdiags.Diagnostics
+
+	// First we'll make sure the requested value is declared in configuration,
+	// so we can produce a nice message if not.
+	moduleConfig := d.Evaluator.Config.DescendentForInstance(d.ModulePath)
+	if moduleConfig == nil {
+		// should never happen, since we can't be evaluating in a module
+		// that wasn't mentioned in configuration.
+		panic(fmt.Sprintf("output value read from %s, which has no configuration", d.ModulePath))
 	}
-	return ""
+
+	config := moduleConfig.Module.Outputs[addr.Name]
+	if config == nil {
+		var suggestions []string
+		for k := range moduleConfig.Module.Outputs {
+			suggestions = append(suggestions, k)
+		}
+		suggestion := didyoumean.NameSuggestion(addr.Name, suggestions)
+		if suggestion != "" {
+			suggestion = fmt.Sprintf(" Did you mean %q?", suggestion)
+		}
+
+		diags = diags.Append(&hcl.Diagnostic{
+			Severity: hcl.DiagError,
+			Summary:  `Reference to undeclared output value`,
+			Detail:   fmt.Sprintf(`An output value with the name %q has not been declared.%s`, addr.Name, suggestion),
+			Subject:  rng.ToHCL().Ptr(),
+		})
+		return cty.DynamicVal, diags
+	}
+
+	output := d.Evaluator.State.OutputValue(addr.Absolute(d.ModulePath))
+	if output == nil {
+		// Then the output itself returned null, so we'll package that up and
+		// pass it on.
+		output = &states.OutputValue{
+			Addr:      addr.Absolute(d.ModulePath),
+			Value:     cty.NilVal,
+			Sensitive: config.Sensitive,
+		}
+	} else if output.Value == cty.NilVal || output.Value.IsNull() {
+		// Then we did get a value but Terraform itself thought it was NilVal
+		// so we treat this as if the value isn't yet known.
+		output.Value = cty.DynamicVal
+	}
+
+	val := output.Value
+	if output.Sensitive {
+		val = val.Mark(marks.Sensitive)
+	}
+
+	return val, diags
+}
+
+func (d *evaluationStateData) GetCheckBlock(addr addrs.Check, rng tfdiags.SourceRange) (cty.Value, tfdiags.Diagnostics) {
+	// For now, check blocks don't contain any meaningful data and can only
+	// be referenced from the testing scope within an expect_failures attribute.
+	//
+	// We've added them into the scope explicitly since they are referencable,
+	// but we'll actually just return an error message saying they can't be
+	// referenced in this context.
+	var diags tfdiags.Diagnostics
+	diags = diags.Append(&hcl.Diagnostic{
+		Severity: hcl.DiagError,
+		Summary:  "Reference to \"check\" in invalid context",
+		Detail:   "The \"check\" object can only be referenced from an \"expect_failures\" attribute within a Terraform testing \"run\" block.",
+		Subject:  rng.ToHCL().Ptr(),
+	})
+	return cty.NilVal, diags
+}
+
+func (d *evaluationStateData) GetRunBlock(run addrs.Run, rng tfdiags.SourceRange) (cty.Value, tfdiags.Diagnostics) {
+	var diags tfdiags.Diagnostics
+
+	data, exists := d.Evaluator.AlternateStates[run.Name]
+	if !exists {
+		diags = diags.Append(&hcl.Diagnostic{
+			Severity: hcl.DiagError,
+			Summary:  "Reference to unavailable run block",
+			Detail:   fmt.Sprintf("The current test file either contains no %s, or hasn't executed it yet.", run),
+			Subject:  rng.ToHCL().Ptr(),
+		})
+		return cty.DynamicVal, diags
+	}
+
+	outputs := make(map[string]cty.Value)
+	for _, outputCfg := range data.Evaluator.Config.Module.Outputs {
+		output, outputDiags := data.GetOutput(outputCfg.Addr(), rng)
+		diags = diags.Append(outputDiags)
+		if outputDiags.HasErrors() {
+			continue
+		}
+		outputs[outputCfg.Name] = output
+	}
+
+	return cty.ObjectVal(outputs), diags
 }
 
 // moduleDisplayAddr returns a string describing the given module instance

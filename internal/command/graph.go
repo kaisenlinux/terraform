@@ -1,5 +1,5 @@
 // Copyright (c) HashiCorp, Inc.
-// SPDX-License-Identifier: MPL-2.0
+// SPDX-License-Identifier: BUSL-1.1
 
 package command
 
@@ -55,7 +55,7 @@ func (c *GraphCommand) Run(args []string) int {
 	}
 
 	// Try to load plan if path is specified
-	var planFile *planfile.Reader
+	var planFile *planfile.WrappedPlanFile
 	if planPath != "" {
 		planFile, err = c.PlanFile(planPath)
 		if err != nil {

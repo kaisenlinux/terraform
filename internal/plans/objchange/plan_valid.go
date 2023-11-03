@@ -1,5 +1,5 @@
 // Copyright (c) HashiCorp, Inc.
-// SPDX-License-Identifier: MPL-2.0
+// SPDX-License-Identifier: BUSL-1.1
 
 package objchange
 
@@ -270,11 +270,11 @@ func assertPlannedAttrValid(name string, attrS *configschema.Attribute, priorSta
 func assertPlannedValueValid(attrS *configschema.Attribute, priorV, configV, plannedV cty.Value, path cty.Path) []error {
 
 	var errs []error
-	if plannedV.RawEquals(configV) {
+	if unrefinedValue(plannedV).RawEquals(unrefinedValue(configV)) {
 		// This is the easy path: provider didn't change anything at all.
 		return errs
 	}
-	if plannedV.RawEquals(priorV) && !priorV.IsNull() && !configV.IsNull() {
+	if unrefinedValue(plannedV).RawEquals(unrefinedValue(priorV)) && !priorV.IsNull() && !configV.IsNull() {
 		// Also pretty easy: there is a prior value and the provider has
 		// returned it unchanged. This indicates that configV and plannedV
 		// are functionally equivalent and so the provider wishes to disregard
@@ -447,14 +447,10 @@ func assertPlannedObjectValid(schema *configschema.Object, prior, config, planne
 		}
 
 	case configschema.NestingSet:
-		if !planned.IsKnown() || !config.IsKnown() {
-			// if either is unknown we cannot check the lengths
-			return errs
-		}
+		plannedL := planned.Length()
+		configL := config.Length()
 
-		plannedL := planned.LengthInt()
-		configL := config.LengthInt()
-		if plannedL != configL {
+		if ok := plannedL.Range().Includes(configL); ok.IsKnown() && ok.False() {
 			errs = append(errs, path.NewErrorf("count in plan (%#v) disagrees with count in config (%#v)", plannedL, configL))
 			return errs
 		}
@@ -465,4 +461,23 @@ func assertPlannedObjectValid(schema *configschema.Object, prior, config, planne
 	}
 
 	return errs
+}
+
+// unrefinedValue returns the given value with any unknown value refinements
+// stripped away, making it a basic unknown value with only a type constraint.
+//
+// This function also considers unknown values nested inside a known container
+// such as a collection, which unfortunately makes it relatively expensive
+// for large data structures. Over time we should transition away from using
+// this trick and prefer to use cty's Equals and value range APIs instead of
+// of using Value.RawEquals, which is primarily intended for unit test code
+// rather than real application use.
+func unrefinedValue(v cty.Value) cty.Value {
+	ret, _ := cty.Transform(v, func(p cty.Path, v cty.Value) (cty.Value, error) {
+		if !v.IsKnown() {
+			return cty.UnknownVal(v.Type()), nil
+		}
+		return v, nil
+	})
+	return ret
 }

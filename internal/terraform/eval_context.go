@@ -1,5 +1,5 @@
 // Copyright (c) HashiCorp, Inc.
-// SPDX-License-Identifier: MPL-2.0
+// SPDX-License-Identifier: BUSL-1.1
 
 package terraform
 
@@ -57,7 +57,7 @@ type EvalContext interface {
 	//
 	// This method expects an _absolute_ provider configuration address, since
 	// resources in one module are able to use providers from other modules.
-	ProviderSchema(addrs.AbsProviderConfig) (*ProviderSchema, error)
+	ProviderSchema(addrs.AbsProviderConfig) (providers.ProviderSchema, error)
 
 	// CloseProvider closes provider connections that aren't needed anymore.
 	//

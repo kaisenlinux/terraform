@@ -1,5 +1,5 @@
 // Copyright (c) HashiCorp, Inc.
-// SPDX-License-Identifier: MPL-2.0
+// SPDX-License-Identifier: BUSL-1.1
 
 package jsonformat
 
@@ -156,8 +156,8 @@ func testProviderSchema() *providers.GetProviderSchemaResponse {
 func testSchemas() *terraform.Schemas {
 	provider := testProvider()
 	return &terraform.Schemas{
-		Providers: map[addrs.Provider]*terraform.ProviderSchema{
-			addrs.NewDefaultProvider("test"): provider.ProviderSchema(),
+		Providers: map[addrs.Provider]providers.ProviderSchema{
+			addrs.NewDefaultProvider("test"): provider.GetProviderSchema(),
 		},
 	}
 }

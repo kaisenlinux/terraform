@@ -1,9 +1,10 @@
 // Copyright (c) HashiCorp, Inc.
-// SPDX-License-Identifier: MPL-2.0
+// SPDX-License-Identifier: BUSL-1.1
 
 package command
 
 import (
+	"context"
 	"io/ioutil"
 	"os"
 	"path/filepath"
@@ -1549,7 +1550,7 @@ func TestMetaBackend_planLocal(t *testing.T) {
 	m := testMetaBackend(t, nil)
 
 	// Get the backend
-	b, diags := m.BackendForPlan(backendConfig)
+	b, diags := m.BackendForLocalPlan(backendConfig)
 	if diags.HasErrors() {
 		t.Fatal(diags.Err())
 	}
@@ -1650,7 +1651,7 @@ func TestMetaBackend_planLocalStatePath(t *testing.T) {
 	m.stateOutPath = statePath
 
 	// Get the backend
-	b, diags := m.BackendForPlan(plannedBackend)
+	b, diags := m.BackendForLocalPlan(plannedBackend)
 	if diags.HasErrors() {
 		t.Fatal(diags.Err())
 	}
@@ -1739,7 +1740,7 @@ func TestMetaBackend_planLocalMatch(t *testing.T) {
 	m := testMetaBackend(t, nil)
 
 	// Get the backend
-	b, diags := m.BackendForPlan(backendConfig)
+	b, diags := m.BackendForLocalPlan(backendConfig)
 	if diags.HasErrors() {
 		t.Fatal(diags.Err())
 	}
@@ -1939,7 +1940,7 @@ func TestBackendFromState(t *testing.T) {
 	// them to match just for this test.
 	wd.OverrideDataDir(".")
 
-	stateBackend, diags := m.backendFromState()
+	stateBackend, diags := m.backendFromState(context.Background())
 	if diags.HasErrors() {
 		t.Fatal(diags.Err())
 	}

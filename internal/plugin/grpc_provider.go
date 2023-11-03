@@ -1,5 +1,5 @@
 // Copyright (c) HashiCorp, Inc.
-// SPDX-License-Identifier: MPL-2.0
+// SPDX-License-Identifier: BUSL-1.1
 
 package plugin
 
@@ -12,6 +12,7 @@ import (
 	"github.com/zclconf/go-cty/cty"
 
 	plugin "github.com/hashicorp/go-plugin"
+	"github.com/hashicorp/terraform/internal/addrs"
 	"github.com/hashicorp/terraform/internal/logging"
 	"github.com/hashicorp/terraform/internal/plugin/convert"
 	"github.com/hashicorp/terraform/internal/providers"
@@ -54,6 +55,11 @@ type GRPCProvider struct {
 	// used in an end to end test of a provider.
 	TestServer *grpc.Server
 
+	// Addr uniquely identifies the type of provider.
+	// Normally executed providers will have this set during initialization,
+	// but it may not always be available for alternative execute modes.
+	Addr addrs.Provider
+
 	// Proto client use to make the grpc service calls.
 	client proto.ProviderClient
 
@@ -62,32 +68,31 @@ type GRPCProvider struct {
 	ctx context.Context
 
 	// schema stores the schema for this provider. This is used to properly
-	// serialize the state for requests.
-	mu      sync.Mutex
-	schemas providers.GetProviderSchemaResponse
+	// serialize the requests for schemas.
+	mu     sync.Mutex
+	schema providers.GetProviderSchemaResponse
 }
 
-// getSchema is used internally to get the cached provider schema
-func (p *GRPCProvider) getSchema() providers.GetProviderSchemaResponse {
-	p.mu.Lock()
-	// unlock inline in case GetSchema needs to be called
-	if p.schemas.Provider.Block != nil {
-		p.mu.Unlock()
-		return p.schemas
-	}
-	p.mu.Unlock()
-
-	return p.GetProviderSchema()
-}
-
-func (p *GRPCProvider) GetProviderSchema() (resp providers.GetProviderSchemaResponse) {
+func (p *GRPCProvider) GetProviderSchema() providers.GetProviderSchemaResponse {
 	logger.Trace("GRPCProvider: GetProviderSchema")
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
-	if p.schemas.Provider.Block != nil {
-		return p.schemas
+	// check the global cache if we can
+	if !p.Addr.IsZero() {
+		if resp, ok := providers.SchemaCache.Get(p.Addr); ok && resp.ServerCapabilities.GetProviderSchemaOptional {
+			logger.Trace("GRPCProvider: returning cached schema", p.Addr.String())
+			return resp
+		}
 	}
+
+	// If the local cache is non-zero, we know this instance has called
+	// GetProviderSchema at least once and we can return early.
+	if p.schema.Provider.Block != nil {
+		return p.schema
+	}
+
+	var resp providers.GetProviderSchemaResponse
 
 	resp.ResourceTypes = make(map[string]providers.Schema)
 	resp.DataSources = make(map[string]providers.Schema)
@@ -135,9 +140,17 @@ func (p *GRPCProvider) GetProviderSchema() (resp providers.GetProviderSchemaResp
 
 	if protoResp.ServerCapabilities != nil {
 		resp.ServerCapabilities.PlanDestroy = protoResp.ServerCapabilities.PlanDestroy
+		resp.ServerCapabilities.GetProviderSchemaOptional = protoResp.ServerCapabilities.GetProviderSchemaOptional
 	}
 
-	p.schemas = resp
+	// set the global cache if we can
+	if !p.Addr.IsZero() {
+		providers.SchemaCache.Set(p.Addr, resp)
+	}
+
+	// always store this here in the client for providers that are not able to
+	// use GetProviderSchemaOptional
+	p.schema = resp
 
 	return resp
 }
@@ -145,7 +158,7 @@ func (p *GRPCProvider) GetProviderSchema() (resp providers.GetProviderSchemaResp
 func (p *GRPCProvider) ValidateProviderConfig(r providers.ValidateProviderConfigRequest) (resp providers.ValidateProviderConfigResponse) {
 	logger.Trace("GRPCProvider: ValidateProviderConfig")
 
-	schema := p.getSchema()
+	schema := p.GetProviderSchema()
 	if schema.Diagnostics.HasErrors() {
 		resp.Diagnostics = schema.Diagnostics
 		return resp
@@ -183,7 +196,7 @@ func (p *GRPCProvider) ValidateProviderConfig(r providers.ValidateProviderConfig
 func (p *GRPCProvider) ValidateResourceConfig(r providers.ValidateResourceConfigRequest) (resp providers.ValidateResourceConfigResponse) {
 	logger.Trace("GRPCProvider: ValidateResourceConfig")
 
-	schema := p.getSchema()
+	schema := p.GetProviderSchema()
 	if schema.Diagnostics.HasErrors() {
 		resp.Diagnostics = schema.Diagnostics
 		return resp
@@ -219,7 +232,7 @@ func (p *GRPCProvider) ValidateResourceConfig(r providers.ValidateResourceConfig
 func (p *GRPCProvider) ValidateDataResourceConfig(r providers.ValidateDataResourceConfigRequest) (resp providers.ValidateDataResourceConfigResponse) {
 	logger.Trace("GRPCProvider: ValidateDataResourceConfig")
 
-	schema := p.getSchema()
+	schema := p.GetProviderSchema()
 	if schema.Diagnostics.HasErrors() {
 		resp.Diagnostics = schema.Diagnostics
 		return resp
@@ -254,7 +267,7 @@ func (p *GRPCProvider) ValidateDataResourceConfig(r providers.ValidateDataResour
 func (p *GRPCProvider) UpgradeResourceState(r providers.UpgradeResourceStateRequest) (resp providers.UpgradeResourceStateResponse) {
 	logger.Trace("GRPCProvider: UpgradeResourceState")
 
-	schema := p.getSchema()
+	schema := p.GetProviderSchema()
 	if schema.Diagnostics.HasErrors() {
 		resp.Diagnostics = schema.Diagnostics
 		return resp
@@ -301,7 +314,7 @@ func (p *GRPCProvider) UpgradeResourceState(r providers.UpgradeResourceStateRequ
 func (p *GRPCProvider) ConfigureProvider(r providers.ConfigureProviderRequest) (resp providers.ConfigureProviderResponse) {
 	logger.Trace("GRPCProvider: ConfigureProvider")
 
-	schema := p.getSchema()
+	schema := p.GetProviderSchema()
 	if schema.Diagnostics.HasErrors() {
 		resp.Diagnostics = schema.Diagnostics
 		return resp
@@ -349,7 +362,7 @@ func (p *GRPCProvider) Stop() error {
 func (p *GRPCProvider) ReadResource(r providers.ReadResourceRequest) (resp providers.ReadResourceResponse) {
 	logger.Trace("GRPCProvider: ReadResource")
 
-	schema := p.getSchema()
+	schema := p.GetProviderSchema()
 	if schema.Diagnostics.HasErrors() {
 		resp.Diagnostics = schema.Diagnostics
 		return resp
@@ -405,7 +418,7 @@ func (p *GRPCProvider) ReadResource(r providers.ReadResourceRequest) (resp provi
 func (p *GRPCProvider) PlanResourceChange(r providers.PlanResourceChangeRequest) (resp providers.PlanResourceChangeResponse) {
 	logger.Trace("GRPCProvider: PlanResourceChange")
 
-	schema := p.getSchema()
+	schema := p.GetProviderSchema()
 	if schema.Diagnostics.HasErrors() {
 		resp.Diagnostics = schema.Diagnostics
 		return resp
@@ -491,7 +504,7 @@ func (p *GRPCProvider) PlanResourceChange(r providers.PlanResourceChangeRequest)
 func (p *GRPCProvider) ApplyResourceChange(r providers.ApplyResourceChangeRequest) (resp providers.ApplyResourceChangeResponse) {
 	logger.Trace("GRPCProvider: ApplyResourceChange")
 
-	schema := p.getSchema()
+	schema := p.GetProviderSchema()
 	if schema.Diagnostics.HasErrors() {
 		resp.Diagnostics = schema.Diagnostics
 		return resp
@@ -562,7 +575,7 @@ func (p *GRPCProvider) ApplyResourceChange(r providers.ApplyResourceChangeReques
 func (p *GRPCProvider) ImportResourceState(r providers.ImportResourceStateRequest) (resp providers.ImportResourceStateResponse) {
 	logger.Trace("GRPCProvider: ImportResourceState")
 
-	schema := p.getSchema()
+	schema := p.GetProviderSchema()
 	if schema.Diagnostics.HasErrors() {
 		resp.Diagnostics = schema.Diagnostics
 		return resp
@@ -607,7 +620,7 @@ func (p *GRPCProvider) ImportResourceState(r providers.ImportResourceStateReques
 func (p *GRPCProvider) ReadDataSource(r providers.ReadDataSourceRequest) (resp providers.ReadDataSourceResponse) {
 	logger.Trace("GRPCProvider: ReadDataSource")
 
-	schema := p.getSchema()
+	schema := p.GetProviderSchema()
 	if schema.Diagnostics.HasErrors() {
 		resp.Diagnostics = schema.Diagnostics
 		return resp

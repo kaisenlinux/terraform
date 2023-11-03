@@ -1,5 +1,5 @@
 // Copyright (c) HashiCorp, Inc.
-// SPDX-License-Identifier: MPL-2.0
+// SPDX-License-Identifier: BUSL-1.1
 
 package jsonplan
 
@@ -46,7 +46,7 @@ const (
 	ResourceInstanceReadBecauseCheckNested        = "read_because_check_nested"
 )
 
-// Plan is the top-level representation of the json format of a plan. It includes
+// plan is the top-level representation of the json format of a plan. It includes
 // the complete config and current state.
 type plan struct {
 	FormatVersion    string      `json:"format_version,omitempty"`
@@ -63,6 +63,7 @@ type plan struct {
 	RelevantAttributes []ResourceAttr    `json:"relevant_attributes,omitempty"`
 	Checks             json.RawMessage   `json:"checks,omitempty"`
 	Timestamp          string            `json:"timestamp,omitempty"`
+	Errored            bool              `json:"errored"`
 }
 
 func newPlan() *plan {
@@ -221,6 +222,7 @@ func Marshal(
 	output := newPlan()
 	output.TerraformVersion = version.String()
 	output.Timestamp = p.Timestamp.Format(time.RFC3339)
+	output.Errored = p.Errored
 
 	err := output.marshalPlanVariables(p.VariableValues, config.Module.Variables)
 	if err != nil {
@@ -291,8 +293,7 @@ func Marshal(
 		return nil, fmt.Errorf("error marshaling config: %s", err)
 	}
 
-	ret, err := json.Marshal(output)
-	return ret, err
+	return json.Marshal(output)
 }
 
 func (p *plan) marshalPlanVariables(vars map[string]plans.DynamicValue, decls map[string]*configs.Variable) error {

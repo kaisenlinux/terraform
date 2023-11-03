@@ -1,5 +1,5 @@
 // Copyright (c) HashiCorp, Inc.
-// SPDX-License-Identifier: MPL-2.0
+// SPDX-License-Identifier: BUSL-1.1
 
 package terraform
 
@@ -11,7 +11,6 @@ import (
 	ctyjson "github.com/zclconf/go-cty/cty/json"
 	"github.com/zclconf/go-cty/cty/msgpack"
 
-	"github.com/hashicorp/terraform/internal/configs/configschema"
 	"github.com/hashicorp/terraform/internal/configs/hcl2shim"
 	"github.com/hashicorp/terraform/internal/providers"
 )
@@ -110,31 +109,6 @@ func (p *MockProvider) getProviderSchema() providers.GetProviderSchemaResponse {
 		DataSources:   map[string]providers.Schema{},
 		ResourceTypes: map[string]providers.Schema{},
 	}
-}
-
-// ProviderSchema is a helper to convert from the internal GetProviderSchemaResponse to
-// a ProviderSchema.
-func (p *MockProvider) ProviderSchema() *ProviderSchema {
-	resp := p.getProviderSchema()
-
-	schema := &ProviderSchema{
-		Provider:                   resp.Provider.Block,
-		ProviderMeta:               resp.ProviderMeta.Block,
-		ResourceTypes:              map[string]*configschema.Block{},
-		DataSources:                map[string]*configschema.Block{},
-		ResourceTypeSchemaVersions: map[string]uint64{},
-	}
-
-	for resType, s := range resp.ResourceTypes {
-		schema.ResourceTypes[resType] = s.Block
-		schema.ResourceTypeSchemaVersions[resType] = uint64(s.Version)
-	}
-
-	for dataSource, s := range resp.DataSources {
-		schema.DataSources[dataSource] = s.Block
-	}
-
-	return schema
 }
 
 func (p *MockProvider) ValidateProviderConfig(r providers.ValidateProviderConfigRequest) (resp providers.ValidateProviderConfigResponse) {
@@ -491,8 +465,13 @@ func (p *MockProvider) ImportResourceState(r providers.ImportResourceStateReques
 
 	if p.ImportResourceStateResponse != nil {
 		resp = *p.ImportResourceStateResponse
+
+		// take a copy of the slice, because it is read by the resource instance
+		importedResources := make([]providers.ImportedResource, len(resp.ImportedResources))
+		copy(importedResources, resp.ImportedResources)
+
 		// fixup the cty value to match the schema
-		for i, res := range resp.ImportedResources {
+		for i, res := range importedResources {
 			schema, ok := p.getProviderSchema().ResourceTypes[res.TypeName]
 			if !ok {
 				resp.Diagnostics = resp.Diagnostics.Append(fmt.Errorf("no schema found for %q", res.TypeName))
@@ -506,8 +485,9 @@ func (p *MockProvider) ImportResourceState(r providers.ImportResourceStateReques
 				return resp
 			}
 
-			resp.ImportedResources[i] = res
+			importedResources[i] = res
 		}
+		resp.ImportedResources = importedResources
 	}
 
 	return resp
@@ -537,6 +517,9 @@ func (p *MockProvider) ReadDataSource(r providers.ReadDataSourceRequest) (resp p
 }
 
 func (p *MockProvider) Close() error {
+	p.Lock()
+	defer p.Unlock()
+
 	p.CloseCalled = true
 	return p.CloseError
 }

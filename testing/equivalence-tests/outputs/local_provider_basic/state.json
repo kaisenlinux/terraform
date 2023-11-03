@@ -9,9 +9,7 @@
           "name": "local_file",
           "provider_name": "registry.terraform.io/hashicorp/local",
           "schema_version": 0,
-          "sensitive_values": {
-            "sensitive_content": true
-          },
+          "sensitive_values": {},
           "type": "local_file",
           "values": {
             "content": "{\"hello\":\"world\"}",

@@ -62,7 +62,6 @@
     "changes": {
       "add": 0,
       "change": 0,
-      "import": 0,
       "operation": "plan",
       "remove": 1
     },
@@ -114,7 +113,6 @@
     "changes": {
       "add": 0,
       "change": 0,
-      "import": 0,
       "operation": "destroy",
       "remove": 1
     },
