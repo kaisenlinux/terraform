@@ -15,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/hashicorp/cli"
 	tfe "github.com/hashicorp/go-tfe"
 	version "github.com/hashicorp/go-version"
 	svchost "github.com/hashicorp/terraform-svchost"
@@ -27,7 +28,6 @@ import (
 	"github.com/hashicorp/terraform/internal/terraform"
 	"github.com/hashicorp/terraform/internal/tfdiags"
 	tfversion "github.com/hashicorp/terraform/version"
-	"github.com/mitchellh/cli"
 	"github.com/mitchellh/colorstring"
 	"github.com/zclconf/go-cty/cty"
 
@@ -700,7 +700,7 @@ func (b *Remote) StateMgr(name string) (statemgr.Full, error) {
 	return &remote.State{
 		Client: client,
 
-		// client.runID will be set if we're running a the Terraform Cloud
+		// client.runID will be set if we're running in a HCP Terraform
 		// or Terraform Enterprise remote execution environment, in which
 		// case we'll disable intermediate snapshots to avoid extra storage
 		// costs for Terraform Enterprise customers.
@@ -758,7 +758,7 @@ func (b *Remote) Operation(ctx context.Context, op *backend.Operation) (*backend
 	// - Workspace configured for local operations, in which case the remote
 	//   version is meaningless;
 	// - Forcing local operations with a remote backend, which should only
-	//   happen in the Terraform Cloud worker, in which case the Terraform
+	//   happen in the HCP Terraform worker, in which case the Terraform
 	//   versions by definition match.
 	b.IgnoreVersionConflict()
 

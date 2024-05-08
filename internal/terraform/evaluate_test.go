@@ -4,7 +4,6 @@
 package terraform
 
 import (
-	"sync"
 	"testing"
 
 	"github.com/davecgh/go-spew/spew"
@@ -13,7 +12,10 @@ import (
 	"github.com/hashicorp/terraform/internal/addrs"
 	"github.com/hashicorp/terraform/internal/configs"
 	"github.com/hashicorp/terraform/internal/configs/configschema"
+	"github.com/hashicorp/terraform/internal/instances"
+	"github.com/hashicorp/terraform/internal/lang"
 	"github.com/hashicorp/terraform/internal/lang/marks"
+	"github.com/hashicorp/terraform/internal/namedvals"
 	"github.com/hashicorp/terraform/internal/plans"
 	"github.com/hashicorp/terraform/internal/providers"
 	"github.com/hashicorp/terraform/internal/states"
@@ -25,11 +27,12 @@ func TestEvaluatorGetTerraformAttr(t *testing.T) {
 		Meta: &ContextMeta{
 			Env: "foo",
 		},
+		NamedValues: namedvals.NewState(),
 	}
 	data := &evaluationStateData{
 		Evaluator: evaluator,
 	}
-	scope := evaluator.Scope(data, nil, nil)
+	scope := evaluator.Scope(data, nil, nil, lang.ExternalFuncs{})
 
 	t.Run("workspace", func(t *testing.T) {
 		want := cty.StringVal("foo")
@@ -55,11 +58,12 @@ func TestEvaluatorGetPathAttr(t *testing.T) {
 				SourceDir: "bar/baz",
 			},
 		},
+		NamedValues: namedvals.NewState(),
 	}
 	data := &evaluationStateData{
 		Evaluator: evaluator,
 	}
-	scope := evaluator.Scope(data, nil, nil)
+	scope := evaluator.Scope(data, nil, nil, lang.ExternalFuncs{})
 
 	t.Run("module", func(t *testing.T) {
 		want := cty.StringVal("bar/baz")
@@ -125,7 +129,7 @@ func TestEvaluatorGetOutputValue(t *testing.T) {
 	data := &evaluationStateData{
 		Evaluator: evaluator,
 	}
-	scope := evaluator.Scope(data, nil, nil)
+	scope := evaluator.Scope(data, nil, nil, lang.ExternalFuncs{})
 
 	want := cty.StringVal("first").Mark(marks.Sensitive)
 	got, diags := scope.Data.GetOutput(addrs.OutputValue{
@@ -155,6 +159,14 @@ func TestEvaluatorGetOutputValue(t *testing.T) {
 // This particularly tests that a sensitive attribute in config
 // results in a value that has a "sensitive" cty Mark
 func TestEvaluatorGetInputVariable(t *testing.T) {
+	namedValues := namedvals.NewState()
+	namedValues.SetInputVariableValue(
+		addrs.RootModuleInstance.InputVariable("some_var"), cty.StringVal("bar"),
+	)
+	namedValues.SetInputVariableValue(
+		addrs.RootModuleInstance.InputVariable("some_other_var"), cty.StringVal("boop").Mark(marks.Sensitive),
+	)
+
 	evaluator := &Evaluator{
 		Meta: &ContextMeta{
 			Env: "foo",
@@ -180,19 +192,13 @@ func TestEvaluatorGetInputVariable(t *testing.T) {
 				},
 			},
 		},
-		VariableValues: map[string]map[string]cty.Value{
-			"": {
-				"some_var":       cty.StringVal("bar"),
-				"some_other_var": cty.StringVal("boop").Mark(marks.Sensitive),
-			},
-		},
-		VariableValuesLock: &sync.Mutex{},
+		NamedValues: namedValues,
 	}
 
 	data := &evaluationStateData{
 		Evaluator: evaluator,
 	}
-	scope := evaluator.Scope(data, nil, nil)
+	scope := evaluator.Scope(data, nil, nil, lang.ExternalFuncs{})
 
 	want := cty.StringVal("bar").Mark(marks.Sensitive)
 	got, diags := scope.Data.GetInputVariable(addrs.InputVariable{
@@ -230,6 +236,32 @@ func TestEvaluatorGetResource(t *testing.T) {
 			&states.ResourceInstanceObjectSrc{
 				Status:    states.ObjectReady,
 				AttrsJSON: []byte(`{"id":"foo", "nesting_list": [{"sensitive_value":"abc"}], "nesting_map": {"foo":{"foo":"x"}}, "nesting_set": [{"baz":"abc"}], "nesting_single": {"boop":"abc"}, "nesting_nesting": {"nesting_list":[{"sensitive_value":"abc"}]}, "value":"hello"}`),
+				AttrSensitivePaths: []cty.PathValueMarks{
+					{
+						Path:  cty.GetAttrPath("nesting_list").IndexInt(0).GetAttr("sensitive_value"),
+						Marks: cty.NewValueMarks(marks.Sensitive),
+					},
+					{
+						Path:  cty.GetAttrPath("nesting_map").IndexString("foo").GetAttr("foo"),
+						Marks: cty.NewValueMarks(marks.Sensitive),
+					},
+					{
+						Path:  cty.GetAttrPath("nesting_nesting").GetAttr("nesting_list").IndexInt(0).GetAttr("sensitive_value"),
+						Marks: cty.NewValueMarks(marks.Sensitive),
+					},
+					{
+						Path:  cty.GetAttrPath("nesting_set"),
+						Marks: cty.NewValueMarks(marks.Sensitive),
+					},
+					{
+						Path:  cty.GetAttrPath("nesting_single").GetAttr("boop"),
+						Marks: cty.NewValueMarks(marks.Sensitive),
+					},
+					{
+						Path:  cty.GetAttrPath("value"),
+						Marks: cty.NewValueMarks(marks.Sensitive),
+					},
+				},
 			},
 			addrs.AbsProviderConfig{
 				Provider: addrs.NewDefaultProvider("test"),
@@ -264,7 +296,8 @@ func TestEvaluatorGetResource(t *testing.T) {
 				},
 			},
 		},
-		State: stateSync,
+		State:       stateSync,
+		NamedValues: namedvals.NewState(),
 		Plugins: schemaOnlyProvidersForTesting(map[addrs.Provider]providers.ProviderSchema{
 			addrs.NewDefaultProvider("test"): {
 				ResourceTypes: map[string]providers.Schema{
@@ -342,7 +375,7 @@ func TestEvaluatorGetResource(t *testing.T) {
 	data := &evaluationStateData{
 		Evaluator: evaluator,
 	}
-	scope := evaluator.Scope(data, nil, nil)
+	scope := evaluator.Scope(data, nil, nil, lang.ExternalFuncs{})
 
 	want := cty.ObjectVal(map[string]cty.Value{
 		"id": cty.StringVal("foo"),
@@ -427,10 +460,10 @@ func TestEvaluatorGetResource_changes(t *testing.T) {
 			After: cty.ObjectVal(map[string]cty.Value{
 				"id":              cty.StringVal("foo"),
 				"to_mark_val":     cty.StringVal("pizza").Mark(marks.Sensitive),
-				"sensitive_value": cty.StringVal("abc"),
+				"sensitive_value": cty.StringVal("abc").Mark(marks.Sensitive),
 				"sensitive_collection": cty.MapVal(map[string]cty.Value{
 					"boop": cty.StringVal("beep"),
-				}),
+				}).Mark(marks.Sensitive),
 			}),
 		},
 	}
@@ -501,14 +534,15 @@ func TestEvaluatorGetResource_changes(t *testing.T) {
 				},
 			},
 		},
-		State:   stateSync,
-		Plugins: schemaOnlyProvidersForTesting(schemas.Providers),
+		State:       stateSync,
+		NamedValues: namedvals.NewState(),
+		Plugins:     schemaOnlyProvidersForTesting(schemas.Providers),
 	}
 
 	data := &evaluationStateData{
 		Evaluator: evaluator,
 	}
-	scope := evaluator.Scope(data, nil, nil)
+	scope := evaluator.Scope(data, nil, nil, lang.ExternalFuncs{})
 
 	want := cty.ObjectVal(map[string]cty.Value{
 		"id":              cty.StringVal("foo"),
@@ -531,19 +565,16 @@ func TestEvaluatorGetResource_changes(t *testing.T) {
 }
 
 func TestEvaluatorGetModule(t *testing.T) {
-	// Create a new evaluator with an existing state
-	stateSync := states.BuildState(func(ss *states.SyncState) {
-		ss.SetOutputValue(
-			addrs.OutputValue{Name: "out"}.Absolute(addrs.ModuleInstance{addrs.ModuleInstanceStep{Name: "mod"}}),
-			cty.StringVal("bar"),
-			true,
-		)
-	}).SyncWrapper()
-	evaluator := evaluatorForModule(stateSync, plans.NewChanges().SyncWrapper())
+	evaluator := evaluatorForModule(states.NewState().SyncWrapper(), plans.NewChanges().SyncWrapper())
+	evaluator.Instances.SetModuleSingle(addrs.RootModuleInstance, addrs.ModuleCall{Name: "mod"})
+	evaluator.NamedValues.SetOutputValue(
+		addrs.OutputValue{Name: "out"}.Absolute(addrs.ModuleInstance{addrs.ModuleInstanceStep{Name: "mod"}}),
+		cty.StringVal("bar").Mark(marks.Sensitive),
+	)
 	data := &evaluationStateData{
 		Evaluator: evaluator,
 	}
-	scope := evaluator.Scope(data, nil, nil)
+	scope := evaluator.Scope(data, nil, nil, lang.ExternalFuncs{})
 	want := cty.ObjectVal(map[string]cty.Value{"out": cty.StringVal("bar").Mark(marks.Sensitive)})
 	got, diags := scope.Data.GetModule(addrs.ModuleCall{
 		Name: "mod",
@@ -553,53 +584,7 @@ func TestEvaluatorGetModule(t *testing.T) {
 		t.Errorf("unexpected diagnostics %s", spew.Sdump(diags))
 	}
 	if !got.RawEquals(want) {
-		t.Errorf("wrong result %#v; want %#v", got, want)
-	}
-
-	// Changes should override the state value
-	changesSync := plans.NewChanges().SyncWrapper()
-	change := &plans.OutputChange{
-		Addr:      addrs.OutputValue{Name: "out"}.Absolute(addrs.ModuleInstance{addrs.ModuleInstanceStep{Name: "mod"}}),
-		Sensitive: true,
-		Change: plans.Change{
-			After: cty.StringVal("baz"),
-		},
-	}
-	cs, _ := change.Encode()
-	changesSync.AppendOutputChange(cs)
-	evaluator = evaluatorForModule(stateSync, changesSync)
-	data = &evaluationStateData{
-		Evaluator: evaluator,
-	}
-	scope = evaluator.Scope(data, nil, nil)
-	want = cty.ObjectVal(map[string]cty.Value{"out": cty.StringVal("baz").Mark(marks.Sensitive)})
-	got, diags = scope.Data.GetModule(addrs.ModuleCall{
-		Name: "mod",
-	}, tfdiags.SourceRange{})
-
-	if len(diags) != 0 {
-		t.Errorf("unexpected diagnostics %s", spew.Sdump(diags))
-	}
-	if !got.RawEquals(want) {
-		t.Errorf("wrong result %#v; want %#v", got, want)
-	}
-
-	// Test changes with empty state
-	evaluator = evaluatorForModule(states.NewState().SyncWrapper(), changesSync)
-	data = &evaluationStateData{
-		Evaluator: evaluator,
-	}
-	scope = evaluator.Scope(data, nil, nil)
-	want = cty.ObjectVal(map[string]cty.Value{"out": cty.StringVal("baz").Mark(marks.Sensitive)})
-	got, diags = scope.Data.GetModule(addrs.ModuleCall{
-		Name: "mod",
-	}, tfdiags.SourceRange{})
-
-	if len(diags) != 0 {
-		t.Errorf("unexpected diagnostics %s", spew.Sdump(diags))
-	}
-	if !got.RawEquals(want) {
-		t.Errorf("wrong result %#v; want %#v", got, want)
+		t.Errorf("wrong result\ngot:  %#v\nwant: %#v", got, want)
 	}
 }
 
@@ -630,99 +615,9 @@ func evaluatorForModule(stateSync *states.SyncState, changesSync *plans.ChangesS
 				},
 			},
 		},
-		State:   stateSync,
-		Changes: changesSync,
-	}
-}
-
-func TestGetRunBlocks(t *testing.T) {
-	evaluator := &Evaluator{
-		AlternateStates: map[string]*evaluationStateData{
-			"zero": {
-				Evaluator: &Evaluator{
-					State: states.BuildState(func(state *states.SyncState) {
-						state.SetOutputValue(addrs.AbsOutputValue{
-							Module: addrs.RootModuleInstance,
-							OutputValue: addrs.OutputValue{
-								Name: "value",
-							},
-						}, cty.StringVal("Hello, world!"), false)
-					}).SyncWrapper(),
-					Config: &configs.Config{
-						Module: &configs.Module{
-							Outputs: map[string]*configs.Output{
-								"value": {
-									Name: "value",
-								},
-							},
-						},
-					},
-				},
-			},
-			"one": {
-				Evaluator: &Evaluator{
-					State: states.BuildState(func(state *states.SyncState) {
-						state.SetOutputValue(addrs.AbsOutputValue{
-							Module: addrs.RootModuleInstance,
-							OutputValue: addrs.OutputValue{
-								Name: "value",
-							},
-						}, cty.StringVal("Hello, universe!"), false)
-					}).SyncWrapper(),
-					Config: &configs.Config{
-						Module: &configs.Module{
-							Outputs: map[string]*configs.Output{
-								"value": {
-									Name: "value",
-								},
-							},
-						},
-					},
-				},
-			},
-		},
-	}
-
-	data := &evaluationStateData{
-		Evaluator:       evaluator,
-		ModulePath:      nil,
-		InstanceKeyData: EvalDataForNoInstanceKey,
-	}
-
-	scope := evaluator.Scope(data, nil, nil)
-	got, diags := scope.Data.GetRunBlock(addrs.Run{Name: "zero"}, tfdiags.SourceRange{})
-	want := cty.ObjectVal(map[string]cty.Value{
-		"value": cty.StringVal("Hello, world!"),
-	})
-
-	if diags.HasErrors() {
-		t.Fatalf("unexpected diagnostics: %s", diags.Err())
-	}
-
-	if !got.RawEquals(want) {
-		t.Errorf("\ngot: %#v\nwant: %#v", got, want)
-	}
-
-	got, diags = scope.Data.GetRunBlock(addrs.Run{Name: "one"}, tfdiags.SourceRange{})
-	want = cty.ObjectVal(map[string]cty.Value{
-		"value": cty.StringVal("Hello, universe!"),
-	})
-
-	if diags.HasErrors() {
-		t.Fatalf("unexpected diagnostics: %s", diags.Err())
-	}
-
-	if !got.RawEquals(want) {
-		t.Errorf("\ngot: %#v\nwant: %#v", got, want)
-	}
-
-	_, diags = scope.Data.GetRunBlock(addrs.Run{Name: "two"}, tfdiags.SourceRange{})
-
-	if !diags.HasErrors() {
-		t.Fatalf("expected some diags but got none")
-	}
-
-	if diags[0].Description().Summary != "Reference to unavailable run block" {
-		t.Errorf("retrieved unexpected diagnostic: %s", diags[0].Description().Summary)
+		State:       stateSync,
+		Changes:     changesSync,
+		Instances:   instances.NewExpander(nil),
+		NamedValues: namedvals.NewState(),
 	}
 }

@@ -391,6 +391,17 @@ func (m ModuleInstance) Call() (ModuleInstance, ModuleCall) {
 	}
 }
 
+// AbsCall returns the same information as [ModuleInstance.Call], but returns
+// it as a single [AbsModuleCall] value rather than the containing module
+// and the local call address separately.
+func (m ModuleInstance) AbsCall() AbsModuleCall {
+	container, call := m.Call()
+	return AbsModuleCall{
+		Module: container,
+		Call:   call,
+	}
+}
+
 // CallInstance returns the module call instance address that corresponds to
 // the given module instance, along with the address of the module instance
 // that contains it.
@@ -502,6 +513,18 @@ func (m ModuleInstance) Module() Module {
 		ret[i] = step.Name
 	}
 	return ret
+}
+
+// ContainingModule returns the address of the module instance as if the last
+// step wasn't instanced. For example, it turns module.child[0] into
+// module.child and module[0].child[0] into module[0].child.
+func (m ModuleInstance) ContainingModule() ModuleInstance {
+	if len(m) == 0 {
+		return nil
+	}
+
+	ret := m.Parent()
+	return ret.Child(m[len(m)-1].Name, NoKey)
 }
 
 func (m ModuleInstance) AddrType() TargetableAddrType {

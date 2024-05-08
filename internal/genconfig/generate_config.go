@@ -4,6 +4,7 @@
 package genconfig
 
 import (
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
@@ -11,6 +12,7 @@ import (
 	"github.com/hashicorp/hcl/v2"
 	"github.com/hashicorp/hcl/v2/hclwrite"
 	"github.com/zclconf/go-cty/cty"
+	ctyjson "github.com/zclconf/go-cty/cty/json"
 
 	"github.com/hashicorp/terraform/internal/addrs"
 	"github.com/hashicorp/terraform/internal/configs/configschema"
@@ -36,7 +38,6 @@ func GenerateResourceContents(addr addrs.AbsResourceInstance,
 		buf.WriteString(fmt.Sprintf("provider = %s\n", pc.StringCompact()))
 	}
 
-	stateVal = omitUnknowns(stateVal)
 	if stateVal.RawEquals(cty.NilVal) {
 		diags = diags.Append(writeConfigAttributes(addr, &buf, schema.Attributes, 2))
 		diags = diags.Append(writeConfigBlocks(addr, &buf, schema.BlockTypes, 2))
@@ -149,24 +150,61 @@ func writeConfigAttributesFromExisting(addr addrs.AbsResourceInstance, buf *stri
 				val = attrS.EmptyValue()
 			}
 			if val.Type() == cty.String {
+				// Before we inspect the string, take off any marks.
+				unmarked, marks := val.Unmark()
+
 				// SHAMELESS HACK: If we have "" for an optional value, assume
 				// it is actually null, due to the legacy SDK.
-				if !val.IsNull() && attrS.Optional && len(val.AsString()) == 0 {
-					val = attrS.EmptyValue()
+				if !unmarked.IsNull() && attrS.Optional && len(unmarked.AsString()) == 0 {
+					unmarked = attrS.EmptyValue()
 				}
+
+				// Before we carry on, add the marks back.
+				val = unmarked.WithMarks(marks)
 			}
 			if attrS.Sensitive || val.IsMarked() {
 				buf.WriteString("null # sensitive")
 			} else {
-				tok := hclwrite.TokensForValue(val)
-				if _, err := tok.WriteTo(buf); err != nil {
-					diags = diags.Append(&hcl.Diagnostic{
-						Severity: hcl.DiagWarning,
-						Summary:  "Skipped part of config generation",
-						Detail:   fmt.Sprintf("Could not create attribute %s in %s when generating import configuration. The plan will likely report the missing attribute as being deleted.", name, addr),
-						Extra:    err,
-					})
-					continue
+				// If the value is a string storing a JSON value we want to represent it in a terraform native way
+				// and encapsulate it in `jsonencode` as it is the idiomatic representation
+				if val.IsKnown() && !val.IsNull() && val.Type() == cty.String && json.Valid([]byte(val.AsString())) {
+					buf.WriteString("jsonencode(")
+
+					var ctyValue ctyjson.SimpleJSONValue
+					err := ctyValue.UnmarshalJSON([]byte(val.AsString()))
+					if err != nil {
+						diags = diags.Append(&hcl.Diagnostic{
+							Severity: hcl.DiagWarning,
+							Summary:  "Failed to parse JSON",
+							Detail:   fmt.Sprintf("Could not parse JSON value of attribute %s in %s when generating import configuration. The plan will likely report the missing attribute as being deleted. This is most likely a bug in Terraform, please report it.", name, addr),
+							Extra:    err,
+						})
+						continue
+					}
+
+					tok := hclwrite.TokensForValue(ctyValue.Value)
+					if _, err := tok.WriteTo(buf); err != nil {
+						diags = diags.Append(&hcl.Diagnostic{
+							Severity: hcl.DiagWarning,
+							Summary:  "Skipped part of config generation",
+							Detail:   fmt.Sprintf("Could not create attribute %s in %s when generating import configuration. The plan will likely report the missing attribute as being deleted.", name, addr),
+							Extra:    err,
+						})
+						continue
+					}
+
+					buf.WriteString(")")
+				} else {
+					tok := hclwrite.TokensForValue(val)
+					if _, err := tok.WriteTo(buf); err != nil {
+						diags = diags.Append(&hcl.Diagnostic{
+							Severity: hcl.DiagWarning,
+							Summary:  "Skipped part of config generation",
+							Detail:   fmt.Sprintf("Could not create attribute %s in %s when generating import configuration. The plan will likely report the missing attribute as being deleted.", name, addr),
+							Extra:    err,
+						})
+						continue
+					}
 				}
 			}
 
@@ -533,60 +571,4 @@ func ctyCollectionValues(val cty.Value) []cty.Value {
 	}
 
 	return ret
-}
-
-// omitUnknowns recursively walks the src cty.Value and returns a new cty.Value,
-// omitting any unknowns.
-//
-// The result also normalizes some types: all sequence types are turned into
-// tuple types and all mapping types are converted to object types, since we
-// assume the result of this is just going to be serialized as JSON (and thus
-// lose those distinctions) anyway.
-func omitUnknowns(val cty.Value) cty.Value {
-	ty := val.Type()
-	switch {
-	case val.IsNull():
-		return val
-	case !val.IsKnown():
-		return cty.NilVal
-	case ty.IsPrimitiveType():
-		return val
-	case ty.IsListType() || ty.IsTupleType() || ty.IsSetType():
-		var vals []cty.Value
-		it := val.ElementIterator()
-		for it.Next() {
-			_, v := it.Element()
-			newVal := omitUnknowns(v)
-			if newVal != cty.NilVal {
-				vals = append(vals, newVal)
-			} else if newVal == cty.NilVal {
-				// element order is how we correlate unknownness, so we must
-				// replace unknowns with nulls
-				vals = append(vals, cty.NullVal(v.Type()))
-			}
-		}
-		// We use tuple types always here, because the work we did above
-		// may have caused the individual elements to have different types,
-		// and we're doing this work to produce JSON anyway and JSON marshalling
-		// represents all of these sequence types as an array.
-		return cty.TupleVal(vals)
-	case ty.IsMapType() || ty.IsObjectType():
-		vals := make(map[string]cty.Value)
-		it := val.ElementIterator()
-		for it.Next() {
-			k, v := it.Element()
-			newVal := omitUnknowns(v)
-			if newVal != cty.NilVal {
-				vals[k.AsString()] = newVal
-			}
-		}
-		// We use object types always here, because the work we did above
-		// may have caused the individual elements to have different types,
-		// and we're doing this work to produce JSON anyway and JSON marshalling
-		// represents both of these mapping types as an object.
-		return cty.ObjectVal(vals)
-	default:
-		// Should never happen, since the above should cover all types
-		panic(fmt.Sprintf("omitUnknowns cannot handle %#v", val))
-	}
 }

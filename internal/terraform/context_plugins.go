@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 
+	"github.com/hashicorp/hcl/v2/hclsyntax"
 	"github.com/hashicorp/terraform/internal/addrs"
 	"github.com/hashicorp/terraform/internal/configs/configschema"
 	"github.com/hashicorp/terraform/internal/providers"
@@ -20,18 +21,30 @@ import (
 type contextPlugins struct {
 	providerFactories    map[addrs.Provider]providers.Factory
 	provisionerFactories map[string]provisioners.Factory
+
+	preloadedProviderSchemas map[addrs.Provider]providers.ProviderSchema
 }
 
-func newContextPlugins(providerFactories map[addrs.Provider]providers.Factory, provisionerFactories map[string]provisioners.Factory) *contextPlugins {
+func newContextPlugins(
+	providerFactories map[addrs.Provider]providers.Factory,
+	provisionerFactories map[string]provisioners.Factory,
+	preloadedProviderSchemas map[addrs.Provider]providers.ProviderSchema,
+) *contextPlugins {
 	ret := &contextPlugins{
-		providerFactories:    providerFactories,
-		provisionerFactories: provisionerFactories,
+		providerFactories:        providerFactories,
+		provisionerFactories:     provisionerFactories,
+		preloadedProviderSchemas: preloadedProviderSchemas,
 	}
 	return ret
 }
 
 func (cp *contextPlugins) HasProvider(addr addrs.Provider) bool {
 	_, ok := cp.providerFactories[addr]
+	return ok
+}
+
+func (cp *contextPlugins) HasPreloadedSchemaForProvider(addr addrs.Provider) bool {
+	_, ok := cp.preloadedProviderSchemas[addr]
 	return ok
 }
 
@@ -66,17 +79,30 @@ func (cp *contextPlugins) NewProvisionerInstance(typ string) (provisioners.Inter
 // to repeatedly call this method with the same address if various different
 // parts of Terraform all need the same schema information.
 func (cp *contextPlugins) ProviderSchema(addr addrs.Provider) (providers.ProviderSchema, error) {
-	log.Printf("[TRACE] terraform.contextPlugins: Initializing provider %q to read its schema", addr)
-
 	// Check the global schema cache first.
 	// This cache is only written by the provider client, and transparently
 	// used by GetProviderSchema, but we check it here because at this point we
 	// may be able to avoid spinning up the provider instance at all.
+	// We skip this if we have preloaded schemas because that suggests that
+	// our caller is not Terraform CLI and therefore it's probably inappropriate
+	// to assume that provider schemas are unique process-wide.
+	//
+	// FIXME: A global cache is inappropriate when Terraform Core is being
+	// used in a non-Terraform-CLI mode where we shouldn't assume that all
+	// calls share the same provider implementations.
 	schemas, ok := providers.SchemaCache.Get(addr)
 	if ok {
+		log.Printf("[TRACE] terraform.contextPlugins: Schema for provider %q is in the global cache", addr)
 		return schemas, nil
 	}
 
+	// We might have a non-global preloaded copy of this provider's schema.
+	if schema, ok := cp.preloadedProviderSchemas[addr]; ok {
+		log.Printf("[TRACE] terraform.contextPlugins: Provider %q has a preloaded schema", addr)
+		return schema, nil
+	}
+
+	log.Printf("[TRACE] terraform.contextPlugins: Initializing provider %q to read its schema", addr)
 	provider, err := cp.NewProviderInstance(addr)
 	if err != nil {
 		return schemas, fmt.Errorf("failed to instantiate provider %q to obtain schema: %s", addr, err)
@@ -111,6 +137,33 @@ func (cp *contextPlugins) ProviderSchema(addr addrs.Provider) (providers.Provide
 			// We're not using the version numbers here yet, but we'll check
 			// for validity anyway in case we start using them in future.
 			return resp, fmt.Errorf("provider %s has invalid negative schema version for data resource type %q, which is a bug in the provider", addr, t)
+		}
+	}
+
+	for n, f := range resp.Functions {
+		if !hclsyntax.ValidIdentifier(n) {
+			return resp, fmt.Errorf("provider %s declares function with invalid name %q", addr, n)
+		}
+		// We'll also do some enforcement of parameter names, even though they
+		// are only for docs/UI for now, to leave room for us to potentially
+		// use them for other purposes later.
+		seenParams := make(map[string]int, len(f.Parameters))
+		for i, p := range f.Parameters {
+			if !hclsyntax.ValidIdentifier(p.Name) {
+				return resp, fmt.Errorf("provider %s function %q declares invalid name %q for parameter %d", addr, n, p.Name, i)
+			}
+			if prevIdx, exists := seenParams[p.Name]; exists {
+				return resp, fmt.Errorf("provider %s function %q reuses name %q for both parameters %d and %d", addr, n, p.Name, prevIdx, i)
+			}
+			seenParams[p.Name] = i
+		}
+		if p := f.VariadicParameter; p != nil {
+			if !hclsyntax.ValidIdentifier(p.Name) {
+				return resp, fmt.Errorf("provider %s function %q declares invalid name %q for its variadic parameter", addr, n, p.Name)
+			}
+			if prevIdx, exists := seenParams[p.Name]; exists {
+				return resp, fmt.Errorf("provider %s function %q reuses name %q for both parameter %d and its variadic parameter", addr, n, p.Name, prevIdx)
+			}
 		}
 	}
 
@@ -171,4 +224,21 @@ func (cp *contextPlugins) ProvisionerSchema(typ string) (*configschema.Block, er
 	}
 
 	return resp.Provisioner, nil
+}
+
+// ProviderFunctionDecls is a helper wrapper around ProviderSchema which first
+// reads the schema of the given provider and then returns all of the
+// functions it declares, if any.
+//
+// ProviderFunctionDecl will return an error if the provider schema lookup
+// fails, but will return an empty set of functions if a successful response
+// returns no functions, or if the provider is using an older protocol version
+// which has no support for provider-contributed functions.
+func (cp *contextPlugins) ProviderFunctionDecls(providerAddr addrs.Provider) (map[string]providers.FunctionDecl, error) {
+	providerSchema, err := cp.ProviderSchema(providerAddr)
+	if err != nil {
+		return nil, err
+	}
+
+	return providerSchema.Functions, nil
 }

@@ -27,6 +27,7 @@ type BinaryManager struct {
 	signingKey         string
 	binaryName         string
 	cloudPluginDataDir string
+	overridePath       string
 	host               svchost.Hostname
 	client             *CloudPluginClient
 	goos               string
@@ -37,9 +38,10 @@ type BinaryManager struct {
 // Binary is a struct containing the path to an authenticated binary corresponding to
 // a backend service.
 type Binary struct {
-	Path              string
-	ProductVersion    string
-	ResolvedFromCache bool
+	Path                    string
+	ProductVersion          string
+	ResolvedFromCache       bool
+	ResolvedFromDevOverride bool
 }
 
 const (
@@ -49,8 +51,8 @@ const (
 
 // BinaryManager initializes a new BinaryManager to broker data between the
 // specified directory location containing cloudplugin package data and a
-// Terraform Cloud backend URL.
-func NewBinaryManager(ctx context.Context, cloudPluginDataDir string, serviceURL *url.URL, goos, arch string) (*BinaryManager, error) {
+// HCP Terraform backend URL.
+func NewBinaryManager(ctx context.Context, cloudPluginDataDir, overridePath string, serviceURL *url.URL, goos, arch string) (*BinaryManager, error) {
 	client, err := NewCloudPluginClient(ctx, serviceURL)
 	if err != nil {
 		return nil, fmt.Errorf("could not initialize cloudplugin version manager: %w", err)
@@ -58,6 +60,7 @@ func NewBinaryManager(ctx context.Context, cloudPluginDataDir string, serviceURL
 
 	return &BinaryManager{
 		cloudPluginDataDir: cloudPluginDataDir,
+		overridePath:       overridePath,
 		host:               svchost.Hostname(serviceURL.Host),
 		client:             client,
 		binaryName:         "terraform-cloudplugin",
@@ -90,6 +93,22 @@ func (v BinaryManager) cachedVersion(version string) *string {
 // Resolve fetches, authenticates, and caches a plugin binary matching the specifications
 // and returns its location and version.
 func (v BinaryManager) Resolve() (*Binary, error) {
+	if v.overridePath != "" {
+		log.Printf("[TRACE] Using dev override for cloudplugin binary")
+		return v.resolveDev()
+	}
+	return v.resolveRelease()
+}
+
+func (v BinaryManager) resolveDev() (*Binary, error) {
+	return &Binary{
+		Path:                    v.overridePath,
+		ProductVersion:          "dev",
+		ResolvedFromDevOverride: true,
+	}, nil
+}
+
+func (v BinaryManager) resolveRelease() (*Binary, error) {
 	manifest, err := v.latestManifest(v.ctx)
 	if err != nil {
 		return nil, fmt.Errorf("could not resolve cloudplugin version for host %q: %w", v.host.ForDisplay(), err)
@@ -101,10 +120,10 @@ func (v BinaryManager) Resolve() (*Binary, error) {
 	}
 
 	// Check if there's a cached binary
-	if cachedBinary := v.cachedVersion(manifest.ProductVersion); cachedBinary != nil {
+	if cachedBinary := v.cachedVersion(manifest.Version); cachedBinary != nil {
 		return &Binary{
 			Path:              *cachedBinary,
-			ProductVersion:    manifest.ProductVersion,
+			ProductVersion:    manifest.Version,
 			ResolvedFromCache: true,
 		}, nil
 	}
@@ -125,7 +144,7 @@ func (v BinaryManager) Resolve() (*Binary, error) {
 	// Authenticate the archive
 	err = v.verifyCloudPlugin(manifest, buildInfo, t.Name())
 	if err != nil {
-		return nil, fmt.Errorf("could not resolve cloudplugin version %q: %w", manifest.ProductVersion, err)
+		return nil, fmt.Errorf("could not resolve cloudplugin version %q: %w", manifest.Version, err)
 	}
 
 	// Unarchive
@@ -141,14 +160,14 @@ func (v BinaryManager) Resolve() (*Binary, error) {
 		return nil, fmt.Errorf("failed to decompress cloud plugin: %w", err)
 	}
 
-	err = os.WriteFile(path.Join(targetPath, ".version"), []byte(manifest.ProductVersion), 0644)
+	err = os.WriteFile(path.Join(targetPath, ".version"), []byte(manifest.Version), 0644)
 	if err != nil {
 		log.Printf("[ERROR] failed to write .version file to %q: %s", targetPath, err)
 	}
 
 	return &Binary{
 		Path:              path.Join(targetPath, v.binaryName),
-		ProductVersion:    manifest.ProductVersion,
+		ProductVersion:    manifest.Version,
 		ResolvedFromCache: false,
 	}, nil
 }
@@ -165,23 +184,25 @@ func (v BinaryManager) downloadFileBuffer(pathOrURL string) ([]byte, error) {
 }
 
 // verifyCloudPlugin authenticates the downloaded release archive
-func (v BinaryManager) verifyCloudPlugin(archiveManifest *Manifest, info *ManifestReleaseBuild, archiveLocation string) error {
-	signature, err := v.downloadFileBuffer(archiveManifest.SHA256SumsSignatureURL)
+func (v BinaryManager) verifyCloudPlugin(archiveManifest *Release, info *BuildArtifact, archiveLocation string) error {
+	signature, err := v.downloadFileBuffer(archiveManifest.URLSHASumsSignatures[0])
 	if err != nil {
 		return fmt.Errorf("failed to download cloudplugin SHA256SUMS signature file: %w", err)
 	}
-	sums, err := v.downloadFileBuffer(archiveManifest.SHA256SumsURL)
+	sums, err := v.downloadFileBuffer(archiveManifest.URLSHASums)
 	if err != nil {
 		return fmt.Errorf("failed to download cloudplugin SHA256SUMS file: %w", err)
 	}
 
-	reportedSHA, err := releaseauth.SHA256FromHex(info.SHA256Sum)
-	if err != nil {
-		return fmt.Errorf("the reported checksum %q is not valid: %w", info.SHA256Sum, err)
-	}
 	checksums, err := releaseauth.ParseChecksums(sums)
 	if err != nil {
 		return fmt.Errorf("failed to parse cloudplugin SHA256SUMS file: %w", err)
+	}
+
+	filename := path.Base(info.URL)
+	reportedSHA, ok := checksums[filename]
+	if !ok {
+		return fmt.Errorf("could not find checksum for file %q", filename)
 	}
 
 	sigAuth := releaseauth.NewSignatureAuthentication(signature, sums)
@@ -190,7 +211,6 @@ func (v BinaryManager) verifyCloudPlugin(archiveManifest *Manifest, info *Manife
 	}
 
 	all := releaseauth.AllAuthenticators(
-		releaseauth.NewMatchingChecksumsAuthentication(reportedSHA, path.Base(info.URL), checksums),
 		releaseauth.NewChecksumAuthentication(reportedSHA, archiveLocation),
 		sigAuth,
 	)
@@ -198,25 +218,22 @@ func (v BinaryManager) verifyCloudPlugin(archiveManifest *Manifest, info *Manife
 	return all.Authenticate()
 }
 
-func (v BinaryManager) latestManifest(ctx context.Context) (*Manifest, error) {
+func (v BinaryManager) latestManifest(ctx context.Context) (*Release, error) {
 	manifestCacheLocation := path.Join(v.cloudPluginDataDir, v.host.String(), "manifest.json")
 
 	// Find the manifest cache for the hostname.
-	info, err := os.Stat(manifestCacheLocation)
+	data, err := os.ReadFile(manifestCacheLocation)
 	modTime := time.Time{}
-	var localManifest *Manifest
+	var localManifest *Release
 	if err != nil {
 		log.Printf("[TRACE] no cloudplugin manifest cache found for host %q", v.host)
 	} else {
 		log.Printf("[TRACE] cloudplugin manifest cache found for host %q", v.host)
-		modTime = info.ModTime()
 
-		data, err := os.ReadFile(manifestCacheLocation)
-		if err == nil {
-			localManifest, err = decodeManifest(bytes.NewBuffer(data))
-			if err != nil {
-				log.Printf("[WARN] failed to decode cloudplugin manifest cache %q: %s", manifestCacheLocation, err)
-			}
+		localManifest, err = decodeManifest(bytes.NewBuffer(data))
+		modTime = localManifest.TimestampUpdated
+		if err != nil {
+			log.Printf("[WARN] failed to decode cloudplugin manifest cache %q: %s", manifestCacheLocation, err)
 		}
 	}
 

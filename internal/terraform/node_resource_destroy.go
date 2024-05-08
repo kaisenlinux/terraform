@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"log"
 
-	"github.com/hashicorp/terraform/internal/instances"
+	"github.com/hashicorp/terraform/internal/lang"
 	"github.com/hashicorp/terraform/internal/plans"
 	"github.com/hashicorp/terraform/internal/tfdiags"
 
@@ -20,11 +20,6 @@ import (
 // destroyed.
 type NodeDestroyResourceInstance struct {
 	*NodeAbstractResourceInstance
-
-	// If DeposedKey is set to anything other than states.NotDeposed then
-	// this node destroys a deposed object of the associated instance
-	// rather than its current object.
-	DeposedKey states.DeposedKey
 }
 
 var (
@@ -41,9 +36,6 @@ var (
 )
 
 func (n *NodeDestroyResourceInstance) Name() string {
-	if n.DeposedKey != states.NotDeposed {
-		return fmt.Sprintf("%s (destroy deposed %s)", n.ResourceInstanceAddr(), n.DeposedKey)
-	}
 	return n.ResourceInstanceAddr().String() + " (destroy)"
 }
 
@@ -214,7 +206,7 @@ func (n *NodeDestroyResourceInstance) managedResourceExecute(ctx EvalContext) (d
 	// Managed resources need to be destroyed, while data sources
 	// are only removed from state.
 	// we pass a nil configuration to apply because we are destroying
-	s, d := n.apply(ctx, state, changeApply, nil, instances.RepetitionData{}, false)
+	s, d := n.apply(ctx, state, changeApply, nil, lang.RepetitionData{}, false)
 	state, diags = s, diags.Append(d)
 	// we don't return immediately here on error, so that the state can be
 	// finalized

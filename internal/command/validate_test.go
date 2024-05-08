@@ -12,7 +12,7 @@ import (
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
-	"github.com/mitchellh/cli"
+	"github.com/hashicorp/cli"
 	"github.com/zclconf/go-cty/cty"
 
 	testing_command "github.com/hashicorp/terraform/internal/command/testing"
@@ -306,6 +306,84 @@ func TestValidateWithInvalidTestModule(t *testing.T) {
 	wantError := "Error: Reference to undeclared input variable"
 	if !strings.Contains(output.Stderr(), wantError) {
 		t.Fatalf("Missing error string %q\n\n'%s'", wantError, output.Stderr())
+	}
+}
+
+func TestValidateWithInvalidOverrides(t *testing.T) {
+
+	// We're reusing some testing configs that were written for testing the
+	// test command here, so we have to initalise things slightly differently
+	// to the other tests.
+
+	td := t.TempDir()
+	testCopyDir(t, testFixturePath(path.Join("test", "invalid-overrides")), td)
+	defer testChdir(t, td)()
+
+	streams, done := terminal.StreamsForTesting(t)
+	view := views.NewView(streams)
+	ui := new(cli.MockUi)
+
+	provider := testing_command.NewProvider(nil)
+
+	providerSource, close := newMockProviderSource(t, map[string][]string{
+		"test": {"1.0.0"},
+	})
+	defer close()
+
+	meta := Meta{
+		testingOverrides: metaOverridesForProvider(provider.Provider),
+		Ui:               ui,
+		View:             view,
+		Streams:          streams,
+		ProviderSource:   providerSource,
+	}
+
+	init := &InitCommand{
+		Meta: meta,
+	}
+
+	output := done(t)
+	if code := init.Run(nil); code != 0 {
+		t.Fatalf("expected status code 0 but got %d: %s", code, output.All())
+	}
+
+	// reset streams for next command
+	streams, done = terminal.StreamsForTesting(t)
+	meta.View = views.NewView(streams)
+	meta.Streams = streams
+
+	c := &ValidateCommand{
+		Meta: meta,
+	}
+
+	var args []string
+	args = append(args, "-no-color")
+
+	code := c.Run(args)
+	output = done(t)
+
+	if code != 0 {
+		t.Errorf("Should have passed: %d\n\n%s", code, output.Stderr())
+	}
+
+	actual := output.All()
+	expected := `
+Warning: Invalid override target
+
+  on main.tftest.hcl line 4, in mock_provider "test":
+   4:     target = test_resource.absent_one
+
+The override target test_resource.absent_one does not exist within the
+configuration under test. This could indicate a typo in the target address or
+an unnecessary override.
+
+(and 5 more similar warnings elsewhere)
+Success! The configuration is valid, but there were some validation warnings
+as shown above.
+
+`
+	if diff := cmp.Diff(expected, actual); len(diff) > 0 {
+		t.Errorf("expected:\n%s\nactual:\n%s\ndiff:\n%s", expected, actual, diff)
 	}
 }
 

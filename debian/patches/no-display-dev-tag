@@ -1,7 +1,7 @@
 Author: Kevin Chevreuil - Kaisen <kaisen@kaisenlinux.org>
 
---- terraform-1.6.3.orig/version/version.go
-+++ terraform-1.6.3/version/version.go
+--- terraform-1.8.3.orig/version/version.go
++++ terraform-1.8.3/version/version.go
 @@ -24,7 +24,7 @@ var rawVersion string
  // dev determines whether the -dev prerelease marker will
  // be included in version info. It is expected to be set to "no" using

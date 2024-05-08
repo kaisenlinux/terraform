@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mitchellh/cli"
+	"github.com/hashicorp/cli"
 
 	"github.com/hashicorp/terraform/internal/backend"
 	"github.com/hashicorp/terraform/internal/command/arguments"
@@ -72,7 +72,7 @@ func TestCloud_refreshBasicActuallyRunsApplyRefresh(t *testing.T) {
 
 	output := b.CLI.(*cli.MockUi).OutputWriter.String()
 	if !strings.Contains(output, "Proceeding with 'terraform apply -refresh-only -auto-approve'") {
-		t.Fatalf("expected TFC header in output: %s", output)
+		t.Fatalf("expected HCP Terraform header in output: %s", output)
 	}
 
 	stateMgr, _ := b.StateMgr(testBackendSingleWorkspaceName)

@@ -40,9 +40,9 @@ const (
 )
 
 // State implements the State interfaces in the state package to handle
-// reading and writing the remote state to TFC. This State on its own does no
-// local caching so every persist will go to the remote storage and local
-// writes will go to memory.
+// reading and writing the remote state to HCP Terraform. This State on
+// its own does no local caching so every persist will go to the remote
+// storage and local writes will go to memory.
 type State struct {
 	mu sync.Mutex
 
@@ -220,7 +220,7 @@ func (s *State) PersistState(schemas *terraform.Schemas) error {
 		return fmt.Errorf("failed to read state: %w", err)
 	}
 
-	ov, err := jsonstate.MarshalOutputs(stateFile.State.RootModule().OutputValues)
+	ov, err := jsonstate.MarshalOutputs(stateFile.State.RootOutputValues)
 	if err != nil {
 		return fmt.Errorf("failed to translate outputs: %w", err)
 	}
@@ -515,7 +515,7 @@ func (s *State) Delete(force bool) error {
 	return nil
 }
 
-// GetRootOutputValues fetches output values from Terraform Cloud
+// GetRootOutputValues fetches output values from HCP Terraform
 func (s *State) GetRootOutputValues() (map[string]*states.OutputValue, error) {
 	ctx := context.Background()
 
@@ -547,7 +547,7 @@ func (s *State) GetRootOutputValues() (map[string]*states.OutputValue, error) {
 				return nil, ErrStateVersionUnauthorizedUpgradeState
 			}
 
-			return state.RootModule().OutputValues, nil
+			return state.RootOutputValues, nil
 		}
 
 		if output.Sensitive {

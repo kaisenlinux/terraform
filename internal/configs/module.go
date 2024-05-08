@@ -49,8 +49,9 @@ type Module struct {
 	ManagedResources map[string]*Resource
 	DataResources    map[string]*Resource
 
-	Moved  []*Moved
-	Import []*Import
+	Moved   []*Moved
+	Removed []*Removed
+	Import  []*Import
 
 	Checks map[string]*Check
 
@@ -88,8 +89,9 @@ type File struct {
 	ManagedResources []*Resource
 	DataResources    []*Resource
 
-	Moved  []*Moved
-	Import []*Import
+	Moved   []*Moved
+	Removed []*Removed
+	Import  []*Import
 
 	Checks []*Check
 }
@@ -221,8 +223,8 @@ func (m *Module) appendFile(file *File) hcl.Diagnostics {
 		if m.CloudConfig != nil {
 			diags = append(diags, &hcl.Diagnostic{
 				Severity: hcl.DiagError,
-				Summary:  "Duplicate Terraform Cloud configurations",
-				Detail:   fmt.Sprintf("A module may have only one 'cloud' block configuring Terraform Cloud. Terraform Cloud was previously configured at %s.", m.CloudConfig.DeclRange),
+				Summary:  "Duplicate HCP Terraform configurations",
+				Detail:   fmt.Sprintf("A module may have only one 'cloud' block configuring HCP Terraform or Terraform Enterprise. The 'cloud' block was previously configured at %s.", m.CloudConfig.DeclRange),
 				Subject:  &c.DeclRange,
 			})
 			continue
@@ -234,8 +236,8 @@ func (m *Module) appendFile(file *File) hcl.Diagnostics {
 	if m.Backend != nil && m.CloudConfig != nil {
 		diags = append(diags, &hcl.Diagnostic{
 			Severity: hcl.DiagError,
-			Summary:  "Both a backend and Terraform Cloud configuration are present",
-			Detail:   fmt.Sprintf("A module may declare either one 'cloud' block configuring Terraform Cloud OR one 'backend' block configuring a state backend. Terraform Cloud is configured at %s; a backend is configured at %s. Remove the backend block to configure Terraform Cloud.", m.CloudConfig.DeclRange, m.Backend.DeclRange),
+			Summary:  "Both a backend and cloud configuration are present",
+			Detail:   fmt.Sprintf("A module may declare either one 'cloud' block OR one 'backend' block configuring a state backend. The 'cloud' block is configured at %s; a backend is configured at %s. Remove the backend block to configure HCP Terraform or Terraform Enteprise.", m.CloudConfig.DeclRange, m.Backend.DeclRange),
 			Subject:  &m.Backend.DeclRange,
 		})
 	}
@@ -420,16 +422,21 @@ func (m *Module) appendFile(file *File) hcl.Diagnostics {
 	// runtime.)
 	m.Moved = append(m.Moved, file.Moved...)
 
+	m.Removed = append(m.Removed, file.Removed...)
+
 	for _, i := range file.Import {
+		iTo, iToOK := parseImportToStatic(i.To)
 		for _, mi := range m.Import {
-			if i.To.Equal(mi.To) {
+			// Try to detect duplicate import targets. We need to see if the to
+			// address can be parsed statically.
+			miTo, miToOK := parseImportToStatic(mi.To)
+			if iToOK && miToOK && iTo.Equal(miTo) {
 				diags = append(diags, &hcl.Diagnostic{
 					Severity: hcl.DiagError,
-					Summary:  fmt.Sprintf("Duplicate import configuration for %q", i.To),
-					Detail:   fmt.Sprintf("An import block for the resource %q was already declared at %s. A resource can have only one import block.", i.To, mi.DeclRange),
-					Subject:  &i.DeclRange,
+					Summary:  fmt.Sprintf("Duplicate import configuration for %q", i.ToResource),
+					Detail:   fmt.Sprintf("An import block for the resource %q was already declared at %s. A resource can have only one import block.", i.ToResource, mi.DeclRange),
+					Subject:  i.To.Range().Ptr(),
 				})
-				continue
 			}
 		}
 
@@ -439,28 +446,12 @@ func (m *Module) appendFile(file *File) hcl.Diagnostics {
 				Alias:     i.ProviderConfigRef.Alias,
 			})
 		} else {
-			implied, err := addrs.ParseProviderPart(i.To.Resource.Resource.ImpliedProvider())
+			implied, err := addrs.ParseProviderPart(i.ToResource.Resource.ImpliedProvider())
 			if err == nil {
 				i.Provider = m.ImpliedProviderForUnqualifiedType(implied)
 			}
 			// We don't return a diagnostic because the invalid resource name
 			// will already have been caught.
-		}
-
-		// It is invalid for any import block to have a "to" argument matching
-		// any moved block's "from" argument.
-		for _, mb := range m.Moved {
-			// Comparing string serialisations is good enough here, because we
-			// only care about equality in the case that both addresses are
-			// AbsResourceInstances.
-			if mb.From.String() == i.To.String() {
-				diags = append(diags, &hcl.Diagnostic{
-					Severity: hcl.DiagError,
-					Summary:  "Cannot import to a move source",
-					Detail:   fmt.Sprintf("An import block for ID %q targets resource address %s, but this address appears in the \"from\" argument of a moved block, which is invalid. Please change the import target to a different address, such as the move target.", i.ID, i.To),
-					Subject:  &i.DeclRange,
-				})
-			}
 		}
 
 		m.Import = append(m.Import, i)
@@ -507,8 +498,8 @@ func (m *Module) mergeFile(file *File) hcl.Diagnostics {
 			// though it can override cloud/backend blocks from _other_ files.
 			diags = append(diags, &hcl.Diagnostic{
 				Severity: hcl.DiagError,
-				Summary:  "Duplicate Terraform Cloud configurations",
-				Detail:   fmt.Sprintf("A module may have only one 'cloud' block configuring Terraform Cloud. Terraform Cloud was previously configured at %s.", file.CloudConfigs[0].DeclRange),
+				Summary:  "Duplicate HCP Terraform configurations",
+				Detail:   fmt.Sprintf("A module may have only one 'cloud' block configuring HCP Terraform or Terraform Enterprise. The 'cloud' block was previously configured at %s.", file.CloudConfigs[0].DeclRange),
 				Subject:  &file.CloudConfigs[1].DeclRange,
 			})
 		}
@@ -659,7 +650,7 @@ func (m *Module) mergeFile(file *File) hcl.Diagnostics {
 	return diags
 }
 
-// gatherProviderLocalNames is a helper function that populatesA a map of
+// gatherProviderLocalNames is a helper function that populates a map of
 // provider FQNs -> provider local names. This information is useful for
 // user-facing output, which should include both the FQN and LocalName. It must
 // only be populated after the module has been parsed.

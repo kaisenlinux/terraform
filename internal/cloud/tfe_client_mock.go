@@ -285,6 +285,18 @@ func (m *MockConfigurationVersions) Download(ctx context.Context, cvID string) (
 	panic("not implemented")
 }
 
+func (m *MockConfigurationVersions) PermanentlyDeleteBackingData(ctx context.Context, svID string) error {
+	panic("not implemented")
+}
+
+func (m *MockConfigurationVersions) RestoreBackingData(ctx context.Context, svID string) error {
+	panic("not implemented")
+}
+
+func (m *MockConfigurationVersions) SoftDeleteBackingData(ctx context.Context, svID string) error {
+	panic("not implemented")
+}
+
 type MockCostEstimates struct {
 	client      *MockClient
 	Estimations map[string]*tfe.CostEstimate
@@ -366,6 +378,8 @@ func (m *MockCostEstimates) Logs(ctx context.Context, costEstimateID string) (io
 
 	return bytes.NewBuffer(logs), nil
 }
+
+var _ tfe.Organizations = (*MockOrganizations)(nil)
 
 type MockOrganizations struct {
 	client        *MockClient
@@ -494,6 +508,30 @@ func (m *MockOrganizations) ReadRunQueue(ctx context.Context, name string, optio
 	}
 
 	return rq, nil
+}
+
+func (m *MockOrganizations) ReadDataRetentionPolicyChoice(ctx context.Context, organization string) (*tfe.DataRetentionPolicyChoice, error) {
+	panic("not implemented")
+}
+
+func (m *MockOrganizations) DeleteDataRetentionPolicy(context.Context, string) error {
+	panic("not implemented")
+}
+
+func (m *MockOrganizations) ReadDataRetentionPolicy(context.Context, string) (*tfe.DataRetentionPolicy, error) {
+	panic("not implemented")
+}
+
+func (m *MockOrganizations) SetDataRetentionPolicy(ctx context.Context, organization string, options tfe.DataRetentionPolicySetOptions) (*tfe.DataRetentionPolicy, error) {
+	panic("not implemented")
+}
+
+func (m *MockOrganizations) SetDataRetentionPolicyDeleteOlder(ctx context.Context, organization string, options tfe.DataRetentionPolicyDeleteOlderSetOptions) (*tfe.DataRetentionPolicyDeleteOlder, error) {
+	panic("not implemented")
+}
+
+func (m *MockOrganizations) SetDataRetentionPolicyDontDelete(ctx context.Context, organization string, options tfe.DataRetentionPolicyDontDeleteSetOptions) (*tfe.DataRetentionPolicyDontDelete, error) {
+	panic("not implemented")
 }
 
 type MockRedactedPlans struct {
@@ -1158,6 +1196,10 @@ func (m *MockRegistryModules) DeleteVersion(ctx context.Context, moduleID tfe.Re
 	panic("implement me")
 }
 
+func (m *MockRegistryModules) DeleteByName(ctx context.Context, moduleID tfe.RegistryModuleID) error {
+	panic("implement me")
+}
+
 func (m *MockRegistryModules) Update(ctx context.Context, moduleID tfe.RegistryModuleID, options tfe.RegistryModuleUpdateOptions) (*tfe.RegistryModule, error) {
 	//TODO implement me
 	panic("implement me")
@@ -1469,6 +1511,8 @@ func (m *MockRunEvents) ReadWithOptions(ctx context.Context, runEventID string, 
 	}, nil
 }
 
+var _ tfe.StateVersions = (*MockStateVersions)(nil)
+
 type MockStateVersions struct {
 	client        *MockClient
 	states        map[string][]byte
@@ -1583,6 +1627,18 @@ func (m *MockStateVersions) Download(ctx context.Context, url string) ([]byte, e
 }
 
 func (m *MockStateVersions) ListOutputs(ctx context.Context, svID string, options *tfe.StateVersionOutputsListOptions) (*tfe.StateVersionOutputsList, error) {
+	panic("not implemented")
+}
+
+func (s *MockStateVersions) SoftDeleteBackingData(ctx context.Context, svID string) error {
+	panic("not implemented")
+}
+
+func (s *MockStateVersions) RestoreBackingData(ctx context.Context, svID string) error {
+	panic("not implemented")
+}
+
+func (s *MockStateVersions) PermanentlyDeleteBackingData(ctx context.Context, svID string) error {
 	panic("not implemented")
 }
 
@@ -1753,6 +1809,9 @@ func (m *MockTestRuns) Logs(ctx context.Context, moduleID tfe.RegistryModuleID, 
 	}
 
 	done := func() (bool, error) {
+		m.Lock()
+		defer m.Unlock()
+
 		tr, exists := m.TestRuns[testRunID]
 		if !exists {
 			return false, tfe.ErrResourceNotFound
@@ -1804,6 +1863,9 @@ func (m *MockTestRuns) Logs(ctx context.Context, moduleID tfe.RegistryModuleID, 
 }
 
 func (m *MockTestRuns) Cancel(ctx context.Context, moduleID tfe.RegistryModuleID, testRunID string) error {
+	m.Lock()
+	defer m.Unlock()
+
 	tr, exists := m.TestRuns[testRunID]
 	if !exists {
 		return tfe.ErrResourceNotFound
@@ -1878,6 +1940,8 @@ func (m *MockVariables) Update(ctx context.Context, workspaceID string, variable
 func (m *MockVariables) Delete(ctx context.Context, workspaceID string, variableID string) error {
 	panic("not implemented")
 }
+
+var _ tfe.Workspaces = (*MockWorkspaces)(nil)
 
 type MockWorkspaces struct {
 	client         *MockClient
@@ -1967,7 +2031,7 @@ func (m *MockWorkspaces) List(ctx context.Context, organization string, options 
 func (m *MockWorkspaces) Create(ctx context.Context, organization string, options tfe.WorkspaceCreateOptions) (*tfe.Workspace, error) {
 	// for TestCloud_setUnavailableTerraformVersion
 	if *options.Name == "unavailable-terraform-version" && options.TerraformVersion != nil {
-		return nil, fmt.Errorf("requested Terraform version not available in this TFC instance")
+		return nil, fmt.Errorf("requested Terraform version not available in this HCP Terraform instance")
 	}
 	if strings.HasSuffix(*options.Name, "no-operations") {
 		options.Operations = tfe.Bool(false)
@@ -2089,7 +2153,7 @@ func (m *MockWorkspaces) UpdateByID(ctx context.Context, workspaceID string, opt
 func updateMockWorkspaceAttributes(w *tfe.Workspace, options tfe.WorkspaceUpdateOptions) error {
 	// for TestCloud_setUnavailableTerraformVersion
 	if w.Name == "unavailable-terraform-version" && options.TerraformVersion != nil {
-		return fmt.Errorf("requested Terraform version not available in this TFC instance")
+		return fmt.Errorf("requested Terraform version not available in this HCP Terraform instance")
 	}
 
 	if options.Operations != nil {
@@ -2257,6 +2321,30 @@ func (m *MockWorkspaces) AddTags(ctx context.Context, workspaceID string, option
 }
 
 func (m *MockWorkspaces) RemoveTags(ctx context.Context, workspaceID string, options tfe.WorkspaceRemoveTagsOptions) error {
+	panic("not implemented")
+}
+
+func (s *MockWorkspaces) ReadDataRetentionPolicy(ctx context.Context, workspaceID string) (*tfe.DataRetentionPolicy, error) {
+	panic("not implemented")
+}
+
+func (s *MockWorkspaces) SetDataRetentionPolicy(ctx context.Context, workspaceID string, options tfe.DataRetentionPolicySetOptions) (*tfe.DataRetentionPolicy, error) {
+	panic("not implemented")
+}
+
+func (s *MockWorkspaces) DeleteDataRetentionPolicy(ctx context.Context, workspaceID string) error {
+	panic("not implemented")
+}
+
+func (s *MockWorkspaces) ReadDataRetentionPolicyChoice(ctx context.Context, workspaceID string) (*tfe.DataRetentionPolicyChoice, error) {
+	panic("not implemented")
+}
+
+func (s *MockWorkspaces) SetDataRetentionPolicyDeleteOlder(ctx context.Context, workspaceID string, options tfe.DataRetentionPolicyDeleteOlderSetOptions) (*tfe.DataRetentionPolicyDeleteOlder, error) {
+	panic("not implemented")
+}
+
+func (s *MockWorkspaces) SetDataRetentionPolicyDontDelete(ctx context.Context, workspaceID string, options tfe.DataRetentionPolicyDontDeleteSetOptions) (*tfe.DataRetentionPolicyDontDelete, error) {
 	panic("not implemented")
 }
 

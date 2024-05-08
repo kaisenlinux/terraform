@@ -11,7 +11,7 @@ import (
 // Test represents the command-line arguments for the test command.
 type Test struct {
 	// CloudRunSource specifies the remote private module that this test run
-	// should execute against in a remote Terraform Cloud run.
+	// should execute against in a remote HCP Terraform run.
 	CloudRunSource string
 
 	// Filter contains a list of test files to execute. If empty, all test files
@@ -26,6 +26,11 @@ type Test struct {
 
 	// ViewType specifies which output format to use: human or JSON.
 	ViewType ViewType
+
+	// JUnitXMLFile specifies an optional filename to write a JUnit XML test
+	// result report to, in addition to the information written to the selected
+	// view type.
+	JUnitXMLFile string
 
 	// You can specify common variables for all tests from the command line.
 	Vars *Vars
@@ -48,6 +53,7 @@ func ParseTest(args []string) (*Test, tfdiags.Diagnostics) {
 	cmdFlags.Var((*flagStringSlice)(&test.Filter), "filter", "filter")
 	cmdFlags.StringVar(&test.TestDirectory, "test-directory", configs.DefaultTestDirectory, "test-directory")
 	cmdFlags.BoolVar(&jsonOutput, "json", false, "json")
+	cmdFlags.StringVar(&test.JUnitXMLFile, "junit-xml", "", "junit-xml")
 	cmdFlags.BoolVar(&test.Verbose, "verbose", false, "verbose")
 
 	// TODO: Finalise the name of this flag.

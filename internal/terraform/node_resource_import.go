@@ -81,10 +81,14 @@ func (n *graphNodeImportState) Execute(ctx EvalContext, op walkOperation) (diags
 
 	// import state
 	absAddr := n.Addr.Resource.Absolute(ctx.Path())
+	hookResourceID := HookResourceIdentity{
+		Addr:         absAddr,
+		ProviderAddr: n.ResolvedProvider.Provider,
+	}
 
 	// Call pre-import hook
 	diags = diags.Append(ctx.Hook(func(h Hook) (HookAction, error) {
-		return h.PreImportState(absAddr, n.ID)
+		return h.PreImportState(hookResourceID, n.ID)
 	}))
 	if diags.HasErrors() {
 		return diags
@@ -107,7 +111,7 @@ func (n *graphNodeImportState) Execute(ctx EvalContext, op walkOperation) (diags
 
 	// Call post-import hook
 	diags = diags.Append(ctx.Hook(func(h Hook) (HookAction, error) {
-		return h.PostImportState(absAddr, imported)
+		return h.PostImportState(hookResourceID, imported)
 	}))
 	return diags
 }
@@ -118,7 +122,7 @@ func (n *graphNodeImportState) Execute(ctx EvalContext, op walkOperation) (diags
 // and state inserts we need to do for our import state. Since they're new
 // resources they don't depend on anything else and refreshes are isolated
 // so this is nearly a perfect use case for dynamic expand.
-func (n *graphNodeImportState) DynamicExpand(ctx EvalContext) (*Graph, error) {
+func (n *graphNodeImportState) DynamicExpand(ctx EvalContext) (*Graph, tfdiags.Diagnostics) {
 	var diags tfdiags.Diagnostics
 
 	g := &Graph{Path: ctx.Path()}
@@ -164,7 +168,7 @@ func (n *graphNodeImportState) DynamicExpand(ctx EvalContext) (*Graph, error) {
 	}
 	if diags.HasErrors() {
 		// Bail out early, then.
-		return nil, diags.Err()
+		return nil, diags
 	}
 
 	// For each of the states, we add a node to handle the refresh/add to state.
@@ -182,7 +186,7 @@ func (n *graphNodeImportState) DynamicExpand(ctx EvalContext) (*Graph, error) {
 	addRootNodeToGraph(g)
 
 	// Done!
-	return g, diags.Err()
+	return g, diags
 }
 
 // graphNodeImportStateSub is the sub-node of graphNodeImportState

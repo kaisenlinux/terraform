@@ -11,6 +11,7 @@ import (
 	"github.com/hashicorp/terraform/internal/configs"
 	"github.com/hashicorp/terraform/internal/configs/configschema"
 	"github.com/hashicorp/terraform/internal/dag"
+	"github.com/hashicorp/terraform/internal/experiments"
 	"github.com/hashicorp/terraform/internal/lang"
 	"github.com/hashicorp/terraform/internal/states"
 	"github.com/hashicorp/terraform/internal/tfdiags"
@@ -82,6 +83,13 @@ type NodeAbstractResource struct {
 	// generateConfigPath tells this node which file to write generated config
 	// into. If empty, then config should not be generated.
 	generateConfigPath string
+
+	// TEMP: [ConfigTransformer] sets this to true when at least one module
+	// in the configuration has opted in to the unknown_instances experiment.
+	// See the field of the same name in [ConfigTransformer] for more details.
+	// (And if that field has been removed already, then this one should've
+	// been too!)
+	unknownInstancesExperimentEnabled bool
 }
 
 var (
@@ -122,6 +130,7 @@ var (
 	_ GraphNodeAttachProvisionerSchema   = (*NodeAbstractResourceInstance)(nil)
 	_ GraphNodeAttachProviderMetaConfigs = (*NodeAbstractResourceInstance)(nil)
 	_ GraphNodeTargetable                = (*NodeAbstractResourceInstance)(nil)
+	_ GraphNodeOverridable               = (*NodeAbstractResourceInstance)(nil)
 	_ dag.GraphNodeDotter                = (*NodeAbstractResourceInstance)(nil)
 )
 
@@ -212,7 +221,14 @@ func (n *NodeAbstractResource) References() []*addrs.Reference {
 func (n *NodeAbstractResource) ImportReferences() []*addrs.Reference {
 	var result []*addrs.Reference
 	for _, importTarget := range n.importTargets {
-		refs, _ := lang.ReferencesInExpr(addrs.ParseRef, importTarget.ID)
+		// legacy import won't have any config
+		if importTarget.Config == nil {
+			continue
+		}
+
+		refs, _ := lang.ReferencesInExpr(addrs.ParseRef, importTarget.Config.ID)
+		result = append(result, refs...)
+		refs, _ = lang.ReferencesInExpr(addrs.ParseRef, importTarget.Config.ForEach)
 		result = append(result, refs...)
 	}
 	return result
@@ -394,19 +410,33 @@ func (n *NodeAbstractResource) writeResourceState(ctx EvalContext, addr addrs.Ab
 	// to expand the module here to create all resources.
 	expander := ctx.InstanceExpander()
 
+	// Allowing unknown values in count and for_each is currently only an
+	// experimental feature. This will hopefully become the default (and only)
+	// behavior in future, if the experiment is successful.
+	//
+	// If this is false then the codepaths that handle unknown values below
+	// become unreachable, because the evaluate functions will reject unknown
+	// values as an error.
+	allowUnknown := ctx.LanguageExperimentActive(experiments.UnknownInstances)
+
 	switch {
 	case n.Config != nil && n.Config.Count != nil:
-		count, countDiags := evaluateCountExpression(n.Config.Count, ctx)
+		count, countDiags := evaluateCountExpression(n.Config.Count, ctx, allowUnknown)
 		diags = diags.Append(countDiags)
 		if countDiags.HasErrors() {
 			return diags
 		}
 
 		state.SetResourceProvider(addr, n.ResolvedProvider)
-		expander.SetResourceCount(addr.Module, n.Addr.Resource, count)
+		if count >= 0 {
+			expander.SetResourceCount(addr.Module, n.Addr.Resource, count)
+		} else {
+			// -1 represents "unknown"
+			expander.SetResourceCountUnknown(addr.Module, n.Addr.Resource)
+		}
 
 	case n.Config != nil && n.Config.ForEach != nil:
-		forEach, forEachDiags := evaluateForEachExpression(n.Config.ForEach, ctx)
+		forEach, known, forEachDiags := evaluateForEachExpression(n.Config.ForEach, ctx, allowUnknown)
 		diags = diags.Append(forEachDiags)
 		if forEachDiags.HasErrors() {
 			return diags
@@ -415,7 +445,11 @@ func (n *NodeAbstractResource) writeResourceState(ctx EvalContext, addr addrs.Ab
 		// This method takes care of all of the business logic of updating this
 		// while ensuring that any existing instances are preserved, etc.
 		state.SetResourceProvider(addr, n.ResolvedProvider)
-		expander.SetResourceForEach(addr.Module, n.Addr.Resource, forEach)
+		if known {
+			expander.SetResourceForEach(addr.Module, n.Addr.Resource, forEach)
+		} else {
+			expander.SetResourceForEachUnknown(addr.Module, n.Addr.Resource)
+		}
 
 	default:
 		state.SetResourceProvider(addr, n.ResolvedProvider)
@@ -437,7 +471,7 @@ func (n *NodeAbstractResource) readResourceInstanceState(ctx EvalContext, addr a
 
 	log.Printf("[TRACE] readResourceInstanceState: reading state for %s", addr)
 
-	src := ctx.State().ResourceInstanceObject(addr, states.CurrentGen)
+	src := ctx.State().ResourceInstanceObject(addr, addrs.NotDeposed)
 	if src == nil {
 		// Presumably we only have deposed objects, then.
 		log.Printf("[TRACE] readResourceInstanceState: no state present for %s", addr)

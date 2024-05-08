@@ -5,6 +5,7 @@ package command
 
 import (
 	"context"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"time"
@@ -27,13 +28,13 @@ func (c *TestCommand) Help() string {
 	helpText := `
 Usage: terraform [global options] test [options]
 
-  Executes automated integration tests against the current Terraform 
+  Executes automated integration tests against the current Terraform
   configuration.
 
-  Terraform will search for .tftest.hcl files within the current configuration 
-  and testing directories. Terraform will then execute the testing run blocks 
-  within any testing files in order, and verify conditional checks and 
-  assertions against the created infrastructure. 
+  Terraform will search for .tftest.hcl files within the current configuration
+  and testing directories. Terraform will then execute the testing run blocks
+  within any testing files in order, and verify conditional checks and
+  assertions against the created infrastructure.
 
   This command creates real infrastructure and will attempt to clean up the
   testing infrastructure on completion. Monitor the output carefully to ensure
@@ -41,12 +42,13 @@ Usage: terraform [global options] test [options]
 
 Options:
 
-  -cloud-run=source     If specified, Terraform will execute this test run 
-                        remotely using Terraform Cloud. You must specify the 
-                        source of a module registered in a private module
-                        registry as the argument to this flag. This allows 
-                        Terraform to associate the cloud run with the correct 
-                        Terraform Cloud module and organization.
+  -cloud-run=source     If specified, Terraform will execute this test run
+                        remotely using HCP Terraform or Terraform Enterpise.
+						You must specify the source of a module registered in
+						a private module registry as the argument to this flag.
+						This allows Terraform to associate the cloud run with
+						the correct HCP Terraform or Terraform Enterprise module
+						and organization.
 
   -filter=testfile      If specified, Terraform will only execute the test files
                         specified by this flag. You can use this option multiple
@@ -57,7 +59,7 @@ Options:
 
   -no-color             If specified, output won't contain any color.
 
-  -test-directory=path	Set the Terraform test directory, defaults to "tests".    
+  -test-directory=path	Set the Terraform test directory, defaults to "tests".
 
   -var 'foo=bar'        Set a value for one of the input variables in the root
                         module of the configuration. Use this option more than
@@ -99,6 +101,31 @@ func (c *TestCommand) Run(rawArgs []string) int {
 	}
 
 	view := views.NewTest(args.ViewType, c.View)
+	var junitXMLView *views.TestJUnitXMLFile
+	if args.JUnitXMLFile != "" {
+		// JUnit XML output is currently experimental, so that we can gather
+		// feedback on exactly how we should map the test results to this
+		// JUnit-oriented format before anyone starts depending on it for real.
+		if !c.AllowExperimentalFeatures {
+			diags = diags.Append(tfdiags.Sourceless(
+				tfdiags.Error,
+				"JUnit XML output is not available",
+				"The -junit-xml option is currently experimental and therefore available only in alpha releases of Terraform CLI.",
+			))
+			view.Diagnostics(nil, nil, diags)
+			return 1
+		}
+		diags = diags.Append(tfdiags.Sourceless(
+			tfdiags.Warning,
+			"JUnit XML output is experimental",
+			"The -junit-xml option is currently experimental and therefore subject to breaking changes or removal, even in patch releases.",
+		))
+		junitXMLView = views.NewTestJUnitXMLFile(args.JUnitXMLFile)
+		view = views.TestMulti{
+			view,
+			junitXMLView,
+		}
+	}
 
 	// The specified testing directory must be a relative path, and it must
 	// point to a directory that is a descendent of the configuration directory.
@@ -129,6 +156,10 @@ func (c *TestCommand) Run(rawArgs []string) int {
 		})
 	}
 	c.variableArgs = rawFlags{items: &items}
+
+	// Collect variables for "terraform test"
+	testVariables, variableDiags := c.collectVariableValuesForTests(args.TestDirectory)
+	diags = diags.Append(variableDiags)
 
 	variables, variableDiags := c.collectVariableValues()
 	diags = diags.Append(variableDiags)
@@ -195,16 +226,22 @@ func (c *TestCommand) Run(rawArgs []string) int {
 		}
 	} else {
 		runner = &local.TestSuiteRunner{
-			Config:          config,
-			GlobalVariables: variables,
-			Opts:            opts,
-			View:            view,
-			Stopped:         false,
-			Cancelled:       false,
-			StoppedCtx:      stopCtx,
-			CancelledCtx:    cancelCtx,
-			Filter:          args.Filter,
-			Verbose:         args.Verbose,
+			Config: config,
+			// The GlobalVariables are loaded from the
+			// main configuration directory
+			// The GlobalTestVariables are loaded from the
+			// test directory
+			GlobalVariables:     variables,
+			GlobalTestVariables: testVariables,
+			TestingDirectory:    args.TestDirectory,
+			Opts:                opts,
+			View:                view,
+			Stopped:             false,
+			Cancelled:           false,
+			StoppedCtx:          stopCtx,
+			CancelledCtx:        cancelCtx,
+			Filter:              args.Filter,
+			Verbose:             args.Verbose,
 		}
 	}
 
@@ -266,6 +303,16 @@ func (c *TestCommand) Run(rawArgs []string) int {
 		}
 	case <-runningCtx.Done():
 		// tests finished normally with no interrupts.
+	}
+
+	if junitXMLView != nil {
+		if err := junitXMLView.Err(); err != nil {
+			testDiags = testDiags.Append(tfdiags.Sourceless(
+				tfdiags.Error,
+				"Failed to write JUnit XML report",
+				fmt.Sprintf("Could not write the requested JUnit XML report: %s.", err),
+			))
+		}
 	}
 
 	view.Diagnostics(nil, nil, testDiags)

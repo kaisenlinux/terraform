@@ -121,7 +121,7 @@ The following example shows use cases for preconditions and postconditions. The 
 
 - **The EC2 instance must be allocated a public DNS hostname.** In Amazon Web Services, EC2 instances are assigned public DNS hostnames only if they belong to a virtual network configured in a certain way. The postcondition would detect if the selected virtual network is not configured correctly, prompting the user to debug the network settings.
 
-- **The EC2 instance will have an encrypted root volume.** The precondition ensures that the root volume is encrypted, even though the software running in this EC2 instance would probably still operate as expected on an unencrypted volume. This lets Terraform produce an error immediately, before any other components rely on the new EC2 instance.
+- **The EC2 instance will have an encrypted root volume.** The postcondition ensures that the root volume is encrypted, even though the software running in this EC2 instance would probably still operate as expected on an unencrypted volume. This lets Terraform produce an error immediately, before any other components rely on the new EC2 instance.
 
 ```hcl
 
@@ -234,9 +234,9 @@ check "health_check" {
 
 If the condition evaluates to `false`, Terraform produces an [error message](#error-messages) that includes the result of the `error_message` expression. If you declare multiple assertions, Terraform returns error messages for all failed conditions.
 
-### Continuous Validation in Terraform Cloud
+### Continuous Validation in HCP Terraform
 
-Terraform Cloud can automatically check whether the checks in a workspace’s configuration continue to pass after Terraform provisions the infrastructure. For example, you can write a `check` to continuously monitor the validity of an API gateway certificate. Continuous validation alerts you when the condition fails, so you can update the certificate and avoid errors the next time you want to update your infrastructure. Refer to [Continuous Validation](/terraform/cloud-docs/workspaces/health#continuous-validation) in the Terraform Cloud documentation for details.
+HCP Terraform can automatically check whether the checks in a workspace’s configuration continue to pass after Terraform provisions the infrastructure. For example, you can write a `check` to continuously monitor the validity of an API gateway certificate. Continuous validation alerts you when the condition fails, so you can update the certificate and avoid errors the next time you want to update your infrastructure. Refer to [Continuous Validation](/terraform/cloud-docs/workspaces/health#continuous-validation) in the HCP Terraform documentation for details.
 
 ## Condition Expressions
 

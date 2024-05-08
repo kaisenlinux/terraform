@@ -15,17 +15,16 @@ Each resource block describes one or more infrastructure objects, such
 as virtual networks, compute instances, or higher-level components such
 as DNS records.
 
-To see how Terraform manages resources when applying a configuration, see
+For information about how Terraform manages resources after applying a configuration, refer to
 [Resource Behavior](/terraform/language/resources/behavior).
 
 ## Resource Syntax
 
-A "resource" block declares a resource of a specific type 
-with a specific local name. The name is used to refer to this resource 
-in the same Terraform module but has no meaning outside that module's scope.
+A `resource` block declares a resource of a specific type 
+with a specific local name. Terraform uses the name when referring to the resource 
+in the same module, but it has no meaning outside that module's scope.
 
-The resource type ("aws_instance") and name ("Web") together must be unique within a module because they
-serve as an identifier for a given resource.
+In the following example,  the `aws_instance` resource type is named `web`. The resource type and name must be unique within a module because they serve as an identifier for a given resource.
 
 ```hcl
 resource "aws_instance" "web" {
@@ -44,7 +43,7 @@ contain only letters, digits, underscores, and dashes.
 
 Resource declarations can include more advanced features, such as single 
 resource declarations that produce multiple similar remote objects, but only
-a small subset is required for initial use. You will learn more later in this page.
+a small subset is required for initial use. 
 
 ## Resource Types
 
@@ -61,16 +60,16 @@ infrastructure platform. Providers are distributed separately from Terraform,
 but Terraform can automatically install most providers when initializing
 a working directory.
 
-To manage resources, a Terraform module must specify the required providers, see 
-[Provider Requirements](/terraform/language/providers/requirements).
+To manage resources, a Terraform module must specify the required providers. Refer to 
+[Provider Requirements](/terraform/language/providers/requirements) for additional information.
 
 Most providers need some configuration to access their remote API, 
-which is provided by the root module, see 
-[Provider Configuration](/terraform/language/providers/configuration)
+which is provided by the root module. Refer to 
+[Provider Configuration](/terraform/language/providers/configuration) for additional information.
 
 Based on a resource type's name, Terraform can usually determine which provider to use. 
 By convention, resource type names start with their provider's preferred local name.
-When using multiple configurations of a provider (or non-preferred local provider names), 
+When using multiple configurations of a provider or non-preferred local provider names, 
 you must use [the `provider` meta-argument](/terraform/language/meta-arguments/resource-provider) 
 to manually choose a provider configuration.
 
@@ -84,7 +83,7 @@ The values for resource arguments can make full use of
 [expressions](/terraform/language/expressions) and other dynamic Terraform
 language features.
 
-[Meta-Arguments](#meta-arguments) are defined by Terraform itself
+[Meta-arguments](#meta-arguments) are defined by Terraform
 and apply across all resource types. 
 
 ### Documentation for Resource Types
@@ -92,14 +91,13 @@ and apply across all resource types.
 Every Terraform provider has its own documentation, describing its resource
 types and their arguments.
 
-Some provider documentation is still part of Terraform's core documentation 
+Some provider documentation is still part of Terraform's core documentation, 
 but the [Terraform Registry](https://registry.terraform.io/browse/providers) 
-is now the main home for all publicly available provider docs.
+is the main home for all publicly available provider docs.
 
 When viewing a provider's page on the Terraform
-Registry, you can click the "Documentation" link in the header to browse its
-documentation, which is versioned. Use the dropdown version menu in the header 
-to switch the version.
+Registry, you can click the **Documentation** link in the header to browse its
+documentation. The documentation is versioned. To choose a different version of the provider documentation, click on the version in the provider breadcrumbs to choose a version from the drop-down menu.
 
 ## Meta-Arguments
 
@@ -112,6 +110,32 @@ any resource type to change the behavior of resources:
 - [`provider`, for selecting a non-default provider configuration](/terraform/language/meta-arguments/resource-provider)
 - [`lifecycle`, for lifecycle customizations](/terraform/language/meta-arguments/lifecycle)
 - [`provisioner`, for taking extra actions after resource creation](/terraform/language/resources/provisioners/syntax)
+
+## Removing Resources
+
+-> **Note:** The `removed` block is available in Terraform v1.7 and later. For earlier Terraform versions, you can use the [`terraform state rm` CLI command](/terraform/cli/commands/state/rm) as a separate step.
+
+To remove a resource from Terraform, simply delete the `resource` block from your Terraform configuration.
+
+By default, after you remove the `resource` block, Terraform will plan to destroy any real infrastructure object managed by that resource.
+
+Sometimes you may wish to remove a resource from your Terraform configuration without destroying the real infrastructure object it manages. In this case, the resource will be removed from the [Terraform state](/terraform/language/state), but the real infrastructure object will not be destroyed.
+
+To declare that a resource was removed from Terraform configuration but that its managed object should not be destroyed, remove the `resource` block from your configuration and replace it with a `removed` block:
+
+```hcl
+removed {
+  from = aws_instance.example
+
+  lifecycle {
+    destroy = false
+  }
+}
+```
+
+The `from` argument is the address of the resource you want to remove, without any instance keys (such as "aws_instance.example[1]").
+
+The `lifecycle` block is required. The `destroy` argument determines whether Terraform will attempt to destroy the object managed by the resource or not. A value of `false` means that Terraform will remove the resource from state without destroying it.
 
 ## Custom Condition Checks
 
@@ -133,8 +157,8 @@ resource "aws_instance" "example" {
 }
 ```
 
-[Custom Condition Checks](/terraform/language/expressions/custom-conditions#preconditions-and-postconditions) 
-can help capture assumptions, helping future maintainers 
+[Custom condition checks](/terraform/language/expressions/custom-conditions#preconditions-and-postconditions) 
+can help capture assumptions so that future maintainers 
 understand the configuration design and intent. They also return useful 
 information about errors earlier and in context, helping consumers to diagnose 
 issues in their configuration.

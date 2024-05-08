@@ -8,13 +8,15 @@ description: >-
 
 -> **Note:** This testing framework is available in Terraform v1.6.0 and later.
 
-Terraform tests let authors validate that module configuration updates do not introduce breaking changes. Tests run against test-specific, short-lived resources, preventing any risk to your existing infrastructure or state. 
+Terraform tests let authors validate that module configuration updates do not introduce breaking changes. Tests run against test-specific, short-lived resources, preventing any risk to your existing infrastructure or state.
 
 ## Integration or Unit testing
 
 By default, tests within Terraform create real infrastructure and can run assertions and validations against that infrastructure. This is analogous to integration testing because you are testing Terraform's core functionality by executing operations and validating the infrastructure Terraform creates.
 
 You can override the normal testing behavior by updating the `command` attribute within a [`run`](#run-blocks) block (examples below). By default, each `run` block executes with `command = apply` instructing Terraform to execute a complete `apply` operation against your configuration. Replacing the `command` value with `command = plan` instructs Terraform to _not_ create new infrastructure for this `run` block. This allows test authors to validate logical operations and custom conditions within their infrastructure in a process analogous to unit testing.
+
+Terraform v1.7.0 introduced the ability to mock data returned by the providers during a `terraform test` execution. This can be used to write more detailed and complete unit tests.
 
 ## Syntax
 
@@ -158,15 +160,21 @@ In addition to specifying variable values via test files, the Terraform `test` c
 
 You can specify values for variables across all tests with the [Command Line](/terraform/language/values/variables#variables-on-the-command-line) and with [Variable Definition Files](/terraform/language/values/variables#variable-definitions-tfvars-files).
 
+As with the main configuration direction, Terraform will automatically load any variables defined in the automatic variable files within a test directory. The automatic variable files are `terraform.tfvars`, `terraform.tfvars.json`, and any files that end with `.auto.tfvars` or `.auto.tfvars.json`.
+
+-> **Note:** Variable values loaded from the automatic variable files within a test directory will only apply to tests also defined within the same test directory. Variables defined in all other ways will apply to all tests in a given test run.
+
 This is particularly useful for using sensitive variables values and for configuring providers. Otherwise, testing files could directly expose those sensitive values.
 
 ### Variable definition precedence
 
 [Variable Definition Precedence](/terraform/language/values/variables#variable-definition-precedence) remains the same within tests, except for variable values that test files provide. The variables defined in test files take the highest precedence, overriding environment variables, variables files, or command-line input.
 
+For tests defined in a test directory, any variable values defined in automatic variable files from the test directory will override values defined in automatic variable files from the main configuration directory.
+
 ### Variable References
 
-Variables you define within `run` blocks can refer to outputs from modules executed in earlier `run` blocks and variables defined at higher precedence levels.
+Variables you define within `run` blocks can refer to outputs from modules executed in earlier `run` blocks and variables defined at higher precedence levels. Variables defined within the file level `variables` block can only refer to global variables.
 
 For example, the following code block shows how a variable can refer to higher precedence variables and previous run blocks:
 
@@ -412,6 +420,40 @@ run "customised_providers" {
 
 > **Note:** When running tests with `command = apply`, switching providers between `run` blocks can result in failed operations and tests because resources created by one provider definition will be unusable when modified by a second.
 
+From Terraform v1.7.0, `provider` blocks can also reference test file variables and run block outputs. This means the testing framework can retrieve credentials and other setup information from one provider and use this when initializing a second.
+
+In the following example, the `vault` provider is initialized first, and then used within a setup module to extract credentials for the `aws` provider. For more information on setup modules, see [Modules](#modules).
+
+```hcl
+
+provider "vault" {
+  # ... vault configuration ...
+}
+
+provider "aws" {
+  region     = "us-east-1"
+
+  # The `aws` provider can reference the outputs of the "vault_setup" run block.
+  access_key = run.vault_setup.aws_access_key
+  secret_key = run.vault_setup.aws_secret_key
+}
+
+run "vault_setup" {
+  module {
+    # This module should only include reference to the Vault provider. Terraform
+    # will automatically work out which providers to supply based on the module
+    # configuration. The tests will error if a run block requires access to a
+    # provider that references outputs from a run block that has not executed.
+    source = "./testing/vault-setup"
+  }
+}
+
+run "use_aws_provider" {
+  # This run block can then use both the `aws` and `vault` providers, as the
+  # previous run block provided all the data required for the `aws` provider.
+}
+```
+
 ## Modules
 
 You can modify the module that a given `run` block executes.
@@ -618,15 +660,11 @@ run "loader" {
 
 #### Modules Cleanup
 
-At the conclusion of a test file, Terraform attempts to destroy every resource it created during the execution of that test file. When Terraform loads alternate modules, the order in which Terraform destroys those objects in is important. For example, in the first [Modules](#modules) example, we could not destroy the resources created in the "setup" `run` block before the objects created in the "execute" `run` block, because the S3 bucket we created in the "setup" step can not be destroyed while it contains objects.
+At the conclusion of a test file, Terraform attempts to destroy every resource it created during the execution of that test file. When Terraform loads alternate modules, the order in which Terraform destroys those objects in is important. For example, in the first [Modules](#modules) example, Terraform could not destroy the resources created in the "setup" `run` block before the objects created in the "execute" `run` block, because the S3 bucket we created in the "setup" step can not be destroyed while it contains objects.
 
-Terraform destroys resources in the following order, and this order is _important_ because it affects the structure of your testing files:
+Terraform destroys resources in reverse `run` block order. In the most recent [example](#modules-state), there are three state files. One for the main state, one for the `./testing/loader` module, and one for the `./testing/setup` module. The `./testing/loader` state file would be destroyed first as it was referenced most recently by the last run block. The main state file would be destroyed second as it was referenced by the "update" `run` block. The `./testing/setup` state file would then be destroyed last.
 
-1. Resources in the main state file. Do not create resources in alternate modules that depend on resources from your main configuration.
-   - Data sources can refer to objects in your main configuration, because Terraform does not have to destroy data sources.
-2. Resources created by alternate modules in reverse `run` block order.
-
-From our [example](#modules-state), any resources created in the "verify" `run` block would be destroyed before resources created in the "setup" `run` block. Note, that in our example this doesn't particularly matter as our "verify" `run` block only loads a data source and creates no resources.
+Note, that the first two `run` blocks "setup" and "init", do nothing during the destroy operations as their state files are used by later run blocks and have already been destroyed.
 
 If you use a single setup module as an alternate module, and it executes first, or you use no alternate modules, then the order of destruction does not affect you. Anything more complex may require careful consideration to make sure the destruction of resources can complete automatically.
 

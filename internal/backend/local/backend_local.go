@@ -10,11 +10,13 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/hashicorp/hcl/v2"
 	"github.com/zclconf/go-cty/cty"
 
 	"github.com/hashicorp/terraform/internal/backend"
 	"github.com/hashicorp/terraform/internal/configs"
 	"github.com/hashicorp/terraform/internal/configs/configload"
+	"github.com/hashicorp/terraform/internal/lang"
 	"github.com/hashicorp/terraform/internal/plans/planfile"
 	"github.com/hashicorp/terraform/internal/states/statemgr"
 	"github.com/hashicorp/terraform/internal/terraform"
@@ -129,7 +131,7 @@ func (b *Local) localRun(op *backend.Operation) (*backend.LocalRun, *configload.
 		// If validation is enabled, validate
 		if b.OpValidation {
 			log.Printf("[TRACE] backend/local: running validation operation")
-			validateDiags := ret.Core.Validate(ret.Config)
+			validateDiags := ret.Core.Validate(ret.Config, nil)
 			diags = diags.Append(validateDiags)
 		}
 	}
@@ -504,4 +506,28 @@ func (v unparsedUnknownVariableValue) ParseVariableValue(mode configs.VariablePa
 		Value:      cty.UnknownVal(v.WantType),
 		SourceType: terraform.ValueFromInput,
 	}, nil
+}
+
+type unparsedTestVariableValue struct {
+	Expr hcl.Expression
+}
+
+var _ backend.UnparsedVariableValue = unparsedTestVariableValue{}
+
+func (v unparsedTestVariableValue) ParseVariableValue(mode configs.VariableParsingMode) (*terraform.InputValue, tfdiags.Diagnostics) {
+	var diags tfdiags.Diagnostics
+
+	value, valueDiags := v.Expr.Value(&hcl.EvalContext{
+		Functions: lang.TestingFunctions(),
+	})
+	diags = diags.Append(valueDiags)
+	if valueDiags.HasErrors() {
+		return nil, diags
+	}
+
+	return &terraform.InputValue{
+		Value:       value,
+		SourceType:  terraform.ValueFromConfig,
+		SourceRange: tfdiags.SourceRangeFromHCL(v.Expr.Range()),
+	}, diags
 }

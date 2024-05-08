@@ -7,7 +7,9 @@ import (
 	"github.com/hashicorp/terraform/internal/addrs"
 	"github.com/hashicorp/terraform/internal/configs"
 	"github.com/hashicorp/terraform/internal/dag"
+	"github.com/hashicorp/terraform/internal/moduletest/mocking"
 	"github.com/hashicorp/terraform/internal/plans"
+	"github.com/hashicorp/terraform/internal/providers"
 	"github.com/hashicorp/terraform/internal/states"
 	"github.com/hashicorp/terraform/internal/tfdiags"
 )
@@ -34,6 +36,12 @@ type ApplyGraphBuilder struct {
 	// to get a consistent result.
 	RootVariableValues InputValues
 
+	// ExternalProviderConfigs are pre-initialized root module provider
+	// configurations that the graph builder should assume will be available
+	// immediately during the subsequent plan walk, without any explicit
+	// initialization step.
+	ExternalProviderConfigs map[addrs.RootProviderConfig]providers.Interface
+
 	// Plugins is a library of the plug-in components (providers and
 	// provisioners) available for use.
 	Plugins *contextPlugins
@@ -57,6 +65,10 @@ type ApplyGraphBuilder struct {
 	// nodes that should not be pruned even if they are not referenced within
 	// the actual graph.
 	ExternalReferences []*addrs.Reference
+
+	// Overrides provides the set of overrides supplied by the testing
+	// framework.
+	Overrides *mocking.Overrides
 }
 
 // See GraphBuilder
@@ -113,6 +125,7 @@ func (b *ApplyGraphBuilder) Steps() []GraphTransformer {
 		&OutputTransformer{
 			Config:     b.Config,
 			Destroying: b.Operation == walkDestroy,
+			Overrides:  b.Overrides,
 		},
 
 		// Creates all the resource instances represented in the diff, along
@@ -142,7 +155,7 @@ func (b *ApplyGraphBuilder) Steps() []GraphTransformer {
 		&AttachResourceConfigTransformer{Config: b.Config},
 
 		// add providers
-		transformProviders(concreteProvider, b.Config),
+		transformProviders(concreteProvider, b.Config, b.ExternalProviderConfigs),
 
 		// Remove modules no longer present in the config
 		&RemovedModuleTransformer{Config: b.Config, State: b.State},

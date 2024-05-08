@@ -260,7 +260,6 @@ func prepareStateV4(sV4 *stateV4) (*File, tfdiags.Diagnostics) {
 	// need to reload them now. (For descendent modules we just re-calculate
 	// them based on the latest configuration on each run.)
 	{
-		rootModule := state.RootModule()
 		for name, fos := range sV4.RootOutputs {
 			os := &states.OutputValue{
 				Addr: addrs.AbsOutputValue{
@@ -292,7 +291,7 @@ func prepareStateV4(sV4 *stateV4) (*File, tfdiags.Diagnostics) {
 			}
 
 			os.Value = val
-			rootModule.OutputValues[name] = os
+			state.RootOutputValues[name] = os
 		}
 	}
 
@@ -338,7 +337,7 @@ func writeStateV4(file *File, w io.Writer) tfdiags.Diagnostics {
 		Resources:        []resourceStateV4{},
 	}
 
-	for name, os := range file.State.RootModule().OutputValues {
+	for name, os := range file.State.RootOutputValues {
 		src, err := ctyjson.Marshal(os.Value, os.Value.Type())
 		if err != nil {
 			diags = diags.Append(tfdiags.Sourceless(
@@ -589,19 +588,6 @@ func encodeCheckResultsV4(in *states.CheckResults) []checkResultsV4 {
 	ret := make([]checkResultsV4, 0, in.ConfigResults.Len())
 
 	for _, configElem := range in.ConfigResults.Elems {
-
-		if configElem.Key.CheckableKind() == addrs.CheckableInputVariable {
-			// For the remainder of the v1.6 series we should not output
-			// checkable input variables into the state file.
-			//
-			// This is to work around the issues in earlier releases that was
-			// fixed by https://github.com/hashicorp/terraform/pull/33813.
-			//
-			// The aim here is to give people more time to upgrade before we
-			// make the latest version incompatible with earlier versions.
-			continue
-		}
-
 		configResultsOut := checkResultsV4{
 			ObjectKind: encodeCheckableObjectKindV4(configElem.Key.CheckableKind()),
 			ConfigAddr: configElem.Key.String(),
