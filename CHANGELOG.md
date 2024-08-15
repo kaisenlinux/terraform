@@ -1,83 +1,88 @@
-## 1.8.3 (May 8, 2024)
-
-BUG FIXES:
-* `terraform test`: Providers configured within an overridden module could panic. ([#35110](https://github.com/hashicorp/terraform/issues/35110))
-* `core`: Fix crash when a provider incorrectly plans a nested object when the configuration is `null` ([#35090](https://github.com/hashicorp/terraform/issues/35090))
-
-## 1.8.2 (April 24, 2024)
+## 1.9.4 (August 7, 2024)
 
 BUG FIXES:
 
-* `terraform apply`: Prevent panic when a provider erroneously provides unknown values. ([#35048](https://github.com/hashicorp/terraform/pull/35048))
-* `terraform plan`: Replace panic with error message when self-referencing resources and data sources from the `count` and `for_each` meta attributes. ([#35047](https://github.com/hashicorp/terraform/pull/35047))
-* `terraform test`: Restore `TF_ENV_*` variables being made available to testing modules. ([#35014](https://github.com/hashicorp/terraform/pull/35014))
-* `terraform test`: Prevent crash when referencing local variables within overridden modules. ([#35030](https://github.com/hashicorp/terraform/pull/35030))
+* core: Unneeded variable validations were being executed during a destroy plan, which could cause plans starting with incomplete state to fail. ([#35511](https://github.com/hashicorp/terraform/issues/35511))
+* init: Don't crash when discovering invalid syntax in duplicate required_providers blocks. ([#35533](https://github.com/hashicorp/terraform/issues/35533))
+
+## 1.9.3 (July 24, 2024)
 
 ENHANCEMENTS:
 
-* Improved performance by removing unneeded additional computation for a disabled experimental feature. ([#35066](https://github.com/hashicorp/terraform/pull/35066))
-
-OTHER CHANGES:
-
-* Update all references to Terraform Cloud to refer to HCP Terraform, the service's new name. This only affects display text; the `cloud` block and environment variables like `TF_CLOUD_ORGANIZATION` remain unchanged. ([#35050](https://github.com/hashicorp/terraform/pull/35050))
-
-NOTE:
-
-Starting with this release, we are including a copy of our license file in all packaged versions of our releases, such as the release .zip files. If you are consuming these files directly and would prefer to extract the one terraform file instead of extracting everything, you need to add an extra argument specifying the file to extract, like this:
-```
-unzip terraform_1.8.2_linux_amd64.zip terraform
-```
-
-## 1.8.1 (April 17, 2024)
+* Terraform now returns a more specific error message in the awkward situation where an input variable validation rule is known to have failed (`condition` returned `false`) but the error message is derived from an unknown value. ([#35400](https://github.com/hashicorp/terraform/pull/35400))
 
 BUG FIXES:
 
-* Fix crash in terraform plan when referencing a module output that does not exist within the try(...) function. ([#34985](https://github.com/hashicorp/terraform/pull/34985))
-* Fix crash in terraform apply when referencing a module with no planned changes. ([#34985](https://github.com/hashicorp/terraform/pull/34985))
-* `moved` block: Fix crash when move targets a module which no longer exists. ([#34986](https://github.com/hashicorp/terraform/pull/34986))
-* `import` block: Fix crash when generating configuration for resources with complex sensitive attributes. ([#34996](https://github.com/hashicorp/terraform/pull/34996))
-* Plan renderer: Correctly render strings that begin with JSON compatible text but don't end with it. ([#34959](https://github.com/hashicorp/terraform/pull/34959))
+* core: Terraform no longer performs an unnecessary refresh when removing an instance targeted by a `removed` block. ([#35458](https://github.com/hashicorp/terraform/pull/35458))
+* config generation: Fix validation error when using nested computed or deprecated attributes. ([#35484](https://github.com/hashicorp/terraform/pull/35484))
+* Updated to newer github.com/hashicorp/go-retryablehttp version, addressing CVE-2024-6104, and bringing in updates for several indirect dependencies. ([#35473](https://github.com/hashicorp/terraform/pull/35473))
+* Moved to building with Go 1.22.5, which addresses CVE-2024-24791 and several other non-security bugs. ([#35494](https://github.com/hashicorp/terraform/pull/35494))
 
-## 1.8.0 (April 10, 2024)
+## 1.9.2 (July 10, 2024)
 
-If you are upgrading from Terraform v1.7 or earlier, please refer to
-[the Terraform v1.8 Upgrade Guide](https://developer.hashicorp.com/terraform/language/v1.8.x/upgrade-guides).
+BUG FIXES:
+
+* core: Fix panic when self-referencing direct instances from `count` and `for_each` meta attributes. ([#35432](https://github.com/hashicorp/terraform/pull/35432))
+
+## 1.9.1 (July 3, 2024)
+
+UPGRADE NOTES:
+
+* Library used by Terraform (hashicorp/go-getter) for installing/updating modules was upgraded from v1.7.4 to v1.7.5. This addresses [CVE-2024-6257](https://nvd.nist.gov/vuln/detail/CVE-2024-6257). This change may have a negative effect on performance of `terraform init` or `terraform get` in case of larger git repositories. Please do file an issue if you find the performance difference noticable. ([#35376](https://github.com/hashicorp/terraform/pull/35376))
+
+BUG FIXES:
+
+* `terraform test`: Removed additional erroneous error message when referencing attributes that don't exist. ([#35408](https://github.com/hashicorp/terraform/pull/35408))
+* `import` blocks: Fix crash that occurs when incorrectly referencing the `to` resource from the `id` attribute. ([#35420](https://github.com/hashicorp/terraform/pull/35420))
+
+## 1.9.0 (June 26, 2024)
+
+If you are upgrading from an earlier minor release, please refer to [the Terraform v1.9 Upgrade Guide](https://developer.hashicorp.com/terraform/language/v1.9.x/upgrade-guides).
 
 NEW FEATURES:
 
-* Providers can now offer functions which can be used from within the Terraform configuration language.
-
-    The syntax for calling a provider-contributed function is `provider::provider_name::function_name()`. ([#34394](https://github.com/hashicorp/terraform/issues/34394))
-* Providers can now transfer the ownership of a remote object between resources of different types, for situations where there are two different resource types that represent the same remote object type.
-
-    This extends the `moved` block behavior to support moving between two resources of different types only if the provider for the target resource type declares that it can convert from the source resource type. Refer to provider documentation for details on which pairs of resource types are supported.
-* New `issensitive` function returns true if the given value is marked as sensitive.
+* **Input variable validation rules can refer to other objects**: Previously input variable validation rules could refer only to the variable being validated. Now they are general expressions, similar to those elsewhere in a module, which can refer to other input variables and to other objects such as data resources.
+* **`templatestring` function**: a new built-in function which is similar to `templatefile` but designed to render templates obtained dynamically, such as from a data resource result.
 
 ENHANCEMENTS:
 
-* `terraform test`: File-level variables can now refer to global variables. ([#34699](https://github.com/hashicorp/terraform/issues/34699))
-* When generating configuration based on `import` blocks, Terraform will detect strings that contain valid JSON syntax and generate them as calls to the `jsonencode` function, rather than generating a single string. This is primarily motivated by readability, but might also be useful if you need to replace part of the literal value with an expression as you generalize your module beyond the one example used for importing.
-* `terraform plan` now uses a different presentation for describing changes to lists where the old and new lists have the same length. It now compares the elements with correlated indices and shows a separate diff for each one, rather than trying to show a diff for the list as a whole. The behavior is unchanged for lists of different lengths.
-* `terraform providers lock` accepts a new boolean option `-enable-plugin-cache`. If specified, and if a [global plugin cache](https://developer.hashicorp.com/terraform/cli/config/config-file#provider-plugin-cache) is configured, Terraform will use the cache in the provider lock process. ([#34632](https://github.com/hashicorp/terraform/issues/34632))
-* built-in "terraform" provider: new `decode_tfvars`, `encode_tfvars`, and `encode_expr` functions, for unusual situations where it's helpful to manually generate or read from Terraform's "tfvars" format. ([#34718](https://github.com/hashicorp/terraform/issues/34718))
-* `terraform show`'s JSON rendering of a plan now includes two explicit flags `"applyable"` and `"complete"`, which both summarize characteristics of a plan that were previously only inferrable by consumers replicating some of Terraform Core's own logic. ([#34642](https://github.com/hashicorp/terraform/issues/34642))
-
-    `"applyable"` means that it makes sense for a wrapping automation to offer to apply this plan.
-
-    `"complete"` means that applying this plan is expected to achieve convergence between desired and actual state. If this flag is present and set to `false` then wrapping automations should ideally encourage an operator to run another plan/apply round to continue making progress toward convergence.
+* `terraform plan`: Improved presentation of OPA and Sentinel policy evaluations in HCP Terraform remote runs, for logical separation.
+* `terraform init` now accepts a `-json` option. If specified, enables the machine readable JSON output. ([#34886](https://github.com/hashicorp/terraform/pull/34886))
+* `terraform test`: Test runs can now pass sensitive values to input variables while preserving their dynamic sensitivity. Previously sensitivity would be preserved only for variables statically declared as being sensitive, using `sensitive = true`. ([#35021](https://github.com/hashicorp/terraform/pull/35021))
+* config: Input variable validation rules can now refer to other objects in the same module. ([#34955](https://github.com/hashicorp/terraform/pull/34955))
+* config: `templatestring` function allows rendering a template provided as a string. ([#34968](https://github.com/hashicorp/terraform/pull/34968), [#35224](https://github.com/hashicorp/terraform/pull/35224), [#35285](https://github.com/hashicorp/terraform/pull/35285))
+* core: Performance improvement during graph building for configurations with an extremely large number of `resource` blocks. ([#35088](https://github.com/hashicorp/terraform/pull/35088))
+* built-in `terraform` provider: Allows `moved` block refactoring from the `hashicorp/null` provider `null_resource` resource type to the `terraform_data` resource type. ([#35163](https://github.com/hashicorp/terraform/pull/35163))
+* `terraform output` with `cloud` block: Terraform no longer suggests that data loss could occur when outputs are not available. ([#35143](https://github.com/hashicorp/terraform/issues/35143))
+* `terraform console`: Now has basic support for multi-line input in interactive mode. ([#34822](https://github.com/hashicorp/terraform/pull/34822))
+    If an entered line contains opening parentheses/etc that are not closed, Terraform will await another line of input to complete the expression. This initial implementation is primarily intended to support pasting in multi-line expressions from elsewhere, rather than for manual multi-line editing, so the interactive editing support is currently limited.
+* cli: Reduced copying of state to improve performance with large numbers of resources. ([#35164](https://github.com/hashicorp/terraform/issues/35164))
+* `removed` blocks can now declare destroy-time provisioners which will be executed when the associated resource instances are destroyed. ([#35230](https://github.com/hashicorp/terraform/issues/35230))
 
 BUG FIXES:
 
-* core: Sensitive values will now be tracked more accurately in state and plans, preventing unexpected updates with no apparent changes. ([#34567](https://github.com/hashicorp/terraform/issues/34567))
-* core: Fix incorrect error message when using in invalid `iterator` argument within a dynamic block. ([#34751](https://github.com/hashicorp/terraform/issues/34751))
-* core: Fixed edge-case bug that could cause loss of floating point precision when round-tripping due to incorrectly using a MessagePack integer to represent a large non-integral number. ([#24576](https://github.com/hashicorp/terraform/issues/24576))
-* config: Converting from an unknown map value to an object type now correctly handles the situation where the map element type disagrees with an optional attribute of the target type, since when a map value is unknown we don't yet know which keys it has and thus cannot predict what subset of the elements will get converted as attributes in the resulting object. ([#34756](https://github.com/hashicorp/terraform/issues/34756))
-* cloud: Fixed unparsed color codes in policy failure error messages. ([#34473](https://github.com/hashicorp/terraform/issues/34473))
+* `remote-exec` provisioner: Each remote connection will now be closed immediately after use. ([#34137](https://github.com/hashicorp/terraform/issues/34137))
+* backend/s3: Fixed the digest value displayed for DynamoDB/S3 state checksum mismatches. ([#34387](https://github.com/hashicorp/terraform/issues/34387))
+* `terraform test`: Fix bug in which non-Hashicorp providers required by testing modules and initialised within the test files were assigned incorrect registry addresses. ([#35161](https://github.com/hashicorp/terraform/issues/35161))
+* config: The `templatefile` function no longer returns a "panic" error if the template file path is marked as sensitive. Instead, the template rendering result is also marked as sensitive. ([#35180](https://github.com/hashicorp/terraform/issues/35180))
+* config: `import` blocks which referenced resources in non-existent modules were silently ignored when they should have raised an error ([#35330](https://github.com/hashicorp/terraform/issues/35330))
+* `terraform init`: When selecting a version for a provider that has both positive and negative version constraints for the same prerelease -- e.g. `1.2.0-beta.1, !1.2.0-beta.1` -- the negative constraint will now overrule the positive, for consistency with how negative constraints are handled otherwise. Previously Terraform would incorrectly treat the positive as overriding the negative if the specified version was a prerelease. ([#35181](https://github.com/hashicorp/terraform/issues/35181))
+* `import`: `import` blocks could block a destroy operation if the target resource was already deleted ([#35272](https://github.com/hashicorp/terraform/issues/35272))
+* `cli`: plan output was missing blocks which were entirely unknown ([#35271](https://github.com/hashicorp/terraform/issues/35271))
+* `cli`: fix crash when running `providers mirror` with an incomplete lock file ([#35322](https://github.com/hashicorp/terraform/issues/35322))
+* core: Changing `create_before_destroy` when replacing an instance, then applying with `-refresh=false` would order the apply operations incorrectly ([#35261](https://github.com/hashicorp/terraform/issues/35261))
+* core: Resource addresses that start with the optional `resource.` prefix will now be correctly parsed when used as an address target. ([#35333](https://github.com/hashicorp/terraform/issues/35333))
+
+UPGRADE NOTES:
+
+* `terraform test`: It is no longer valid to specify version constraints within provider blocks within .tftest.hcl files. Instead, version constraints must be supplied within the main configuration where the provider is in use.
+* `import`: Invalid `import` blocks pointing to nonexistent modules were mistakenly ignored in prior versions. These will need to be fixed or removed in v1.9.
 
 ## Previous Releases
 
 For information on prior major and minor releases, see their changelogs:
 
+* [v1.8](https://github.com/hashicorp/terraform/blob/v1.8/CHANGELOG.md)
 * [v1.7](https://github.com/hashicorp/terraform/blob/v1.7/CHANGELOG.md)
 * [v1.6](https://github.com/hashicorp/terraform/blob/v1.6/CHANGELOG.md)
 * [v1.5](https://github.com/hashicorp/terraform/blob/v1.5/CHANGELOG.md)

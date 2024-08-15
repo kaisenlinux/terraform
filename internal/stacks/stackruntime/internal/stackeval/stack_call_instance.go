@@ -13,7 +13,8 @@ import (
 
 	"github.com/hashicorp/terraform/internal/addrs"
 	"github.com/hashicorp/terraform/internal/collections"
-	"github.com/hashicorp/terraform/internal/lang"
+	"github.com/hashicorp/terraform/internal/instances"
+	"github.com/hashicorp/terraform/internal/promising"
 	"github.com/hashicorp/terraform/internal/stacks/stackaddrs"
 	"github.com/hashicorp/terraform/internal/stacks/stackplan"
 	"github.com/hashicorp/terraform/internal/stacks/stackstate"
@@ -33,13 +34,13 @@ type StackCallInstance struct {
 
 	main *Main
 
-	repetition lang.RepetitionData
+	repetition instances.RepetitionData
 }
 
 var _ ExpressionScope = (*StackCallInstance)(nil)
 var _ Plannable = (*StackCallInstance)(nil)
 
-func newStackCallInstance(call *StackCall, key addrs.InstanceKey, repetition lang.RepetitionData) *StackCallInstance {
+func newStackCallInstance(call *StackCall, key addrs.InstanceKey, repetition instances.RepetitionData) *StackCallInstance {
 	return &StackCallInstance{
 		call:       call,
 		key:        key,
@@ -48,7 +49,7 @@ func newStackCallInstance(call *StackCall, key addrs.InstanceKey, repetition lan
 	}
 }
 
-func (c *StackCallInstance) RepetitionData() lang.RepetitionData {
+func (c *StackCallInstance) RepetitionData() instances.RepetitionData {
 	return c.repetition
 }
 
@@ -203,4 +204,9 @@ func (c *StackCallInstance) CheckApply(ctx context.Context) ([]stackstate.Applie
 // tracingName implements Plannable.
 func (c *StackCallInstance) tracingName() string {
 	return fmt.Sprintf("%s call", c.CalledStackAddr())
+}
+
+// reportNamedPromises implements namedPromiseReporter.
+func (c *StackCallInstance) reportNamedPromises(cb func(id promising.PromiseID, name string)) {
+	// StackCallInstance does not currently own any promises
 }

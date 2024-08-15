@@ -201,11 +201,8 @@ data "test_data_source" "foo" {
 		&states.ResourceInstanceObjectSrc{
 			Status:    states.ObjectReady,
 			AttrsJSON: []byte(`{"id":"data_id", "foo":[{"bar":"baz"}]}`),
-			AttrSensitivePaths: []cty.PathValueMarks{
-				{
-					Path:  cty.GetAttrPath("foo"),
-					Marks: cty.NewValueMarks(marks.Sensitive),
-				},
+			AttrSensitivePaths: []cty.Path{
+				cty.GetAttrPath("foo"),
 			},
 		},
 		mustProviderConfig(`provider["registry.terraform.io/hashicorp/test"]`),
@@ -2706,11 +2703,8 @@ data "test_data_source" "foo" {
 		&states.ResourceInstanceObjectSrc{
 			Status:    states.ObjectReady,
 			AttrsJSON: []byte(`{"string":"data_id", "foo":[{"bar":"old"}]}`),
-			AttrSensitivePaths: []cty.PathValueMarks{
-				{
-					Path:  cty.GetAttrPath("foo"),
-					Marks: cty.NewValueMarks(marks.Sensitive),
-				},
+			AttrSensitivePaths: []cty.Path{
+				cty.GetAttrPath("foo"),
 			},
 		},
 		mustProviderConfig(`provider["registry.terraform.io/hashicorp/test"]`),
@@ -2720,11 +2714,8 @@ data "test_data_source" "foo" {
 		&states.ResourceInstanceObjectSrc{
 			Status:    states.ObjectReady,
 			AttrsJSON: []byte(`{"sensitive":"old"}`),
-			AttrSensitivePaths: []cty.PathValueMarks{
-				{
-					Path:  cty.GetAttrPath("sensitive"),
-					Marks: cty.NewValueMarks(marks.Sensitive),
-				},
+			AttrSensitivePaths: []cty.Path{
+				cty.GetAttrPath("sensitive"),
 			},
 		},
 		mustProviderConfig(`provider["registry.terraform.io/hashicorp/test"]`),
@@ -4588,61 +4579,6 @@ resource "test_object" "a" {
 	}
 }
 
-func TestContext2Plan_plannedState(t *testing.T) {
-	addr := mustResourceInstanceAddr("test_object.a")
-	m := testModuleInline(t, map[string]string{
-		"main.tf": `
-resource "test_object" "a" {
-	test_string = "foo"
-}
-
-locals {
-  local_value = test_object.a.test_string
-}
-
-output "from_local_value" {
-  value = local.local_value
-}
-`,
-	})
-
-	p := simpleMockProvider()
-	ctx := testContext2(t, &ContextOpts{
-		Providers: map[addrs.Provider]providers.Factory{
-			addrs.NewDefaultProvider("test"): testProviderFuncFixed(p),
-		},
-	})
-
-	state := states.NewState()
-	plan, diags := ctx.Plan(m, state, nil)
-	if diags.HasErrors() {
-		t.Errorf("expected no errors, but got %s", diags)
-	}
-
-	module := state.RootModule()
-
-	// So, the original state shouldn't have been updated at all.
-	if len(state.RootOutputValues) > 0 {
-		t.Errorf("expected no root output values in the state but found %d", len(state.RootOutputValues))
-	}
-
-	if len(module.Resources) > 0 {
-		t.Errorf("expected no resources in the state but found %d", len(module.Resources))
-	}
-
-	// But, this makes it hard for the testing framework to valid things about
-	// the returned plan. So, the plan contains the planned state:
-	module = plan.PlannedState.RootModule()
-
-	if got, want := plan.PlannedState.RootOutputValues["from_local_value"].Value.AsString(), "foo"; got != want {
-		t.Errorf("expected local value to be %q but was %q", want, got)
-	}
-
-	if module.ResourceInstance(addr.Resource).Current.Status != states.ObjectPlanned {
-		t.Errorf("expected resource to be in planned state")
-	}
-}
-
 func TestContext2Plan_externalProviders(t *testing.T) {
 	// This test exercises the option for callers to pass in their own
 	// already-configured provider instances, instead of the modules runtime
@@ -4818,12 +4754,6 @@ func TestContext2Apply_externalDependencyDeferred(t *testing.T) {
 
 	cfg := testModuleInline(t, map[string]string{
 		"main.tf": `
-			// TEMP: unknown for_each currently requires an experiment opt-in.
-			// We should remove this block if the experiment gets stabilized.
-			terraform {
-				experiments = [unknown_instances]
-			}
-
 			resource "test" "a" {
 				name = "a"
 			}
@@ -4890,6 +4820,7 @@ func TestContext2Apply_externalDependencyDeferred(t *testing.T) {
 
 	plan, diags := ctx.Plan(cfg, states.NewState(), &PlanOpts{
 		Mode:                       plans.NormalMode,
+		DeferralAllowed:            true,
 		ExternalDependencyDeferred: true,
 	})
 	assertNoDiagnostics(t, diags)
@@ -5408,11 +5339,8 @@ resource "test_resource" "a" {
 		&states.ResourceInstanceObjectSrc{
 			Status:    states.ObjectReady,
 			AttrsJSON: []byte(`{"value":"secret"}]}`),
-			AttrSensitivePaths: []cty.PathValueMarks{
-				{
-					Path:  cty.GetAttrPath("value"),
-					Marks: cty.NewValueMarks(marks.Sensitive),
-				},
+			AttrSensitivePaths: []cty.Path{
+				cty.GetAttrPath("value"),
 			},
 		},
 		mustProviderConfig(`provider["registry.terraform.io/hashicorp/test"]`),
@@ -5489,15 +5417,8 @@ resource "test_object" "obj" {
 	assertNoErrors(t, diags)
 
 	ch := plan.Changes.ResourceInstance(mustResourceInstanceAddr("test_object.obj"))
-	if len(ch.AfterValMarks) == 0 {
+	if len(ch.AfterSensitivePaths) == 0 {
 		t.Fatal("expected marked values in test_object.obj")
-	}
-
-	data := plan.PlannedState.RootModule().ResourceInstance(mustResourceInstanceAddr("data.test_data_source.foo").Resource)
-	if len(data.Current.AttrSensitivePaths) == 0 {
-		// we may not always store data source states in the future, but for now
-		// this is a good indication that the read value was correctly marked.
-		t.Fatal("data.test_data_source.foo schema contains a sensitive attribute, should be marked in state")
 	}
 }
 
@@ -5545,9 +5466,11 @@ resource "test_object" "obj" {
 
 	state := states.BuildState(func(s *states.SyncState) {
 		s.SetResourceInstanceCurrent(mustResourceInstanceAddr("test_object.obj"), &states.ResourceInstanceObjectSrc{
-			AttrsJSON:          []byte(`{"id":"z","set_block":[{"foo":"bar"}]}`),
-			AttrSensitivePaths: []cty.PathValueMarks{{Path: cty.Path{cty.GetAttrStep{Name: "set_block"}}, Marks: cty.NewValueMarks(marks.Sensitive)}},
-			Status:             states.ObjectReady,
+			AttrsJSON: []byte(`{"id":"z","set_block":[{"foo":"bar"}]}`),
+			AttrSensitivePaths: []cty.Path{
+				cty.GetAttrPath("set_block"),
+			},
+			Status: states.ObjectReady,
 		}, mustProviderConfig(`provider["registry.terraform.io/hashicorp/test"]`))
 	})
 
@@ -5610,4 +5533,191 @@ output "value" {
 	// Just shouldn't crash.
 	_, diags := ctx.Plan(m, states.NewState(), SimplePlanOpts(plans.NormalMode, testInputValuesUnset(m.Module.Variables)))
 	assertNoErrors(t, diags)
+}
+
+func TestContext2Plan_sensitiveRequiredReplace(t *testing.T) {
+	m := testModuleInline(t, map[string]string{
+		"main.tf": `
+resource "test_object" "obj" {
+	value = "changed"
+}
+`,
+	})
+	p := new(testing_provider.MockProvider)
+	p.GetProviderSchemaResponse = &providers.GetProviderSchemaResponse{
+		ResourceTypes: map[string]providers.Schema{
+			"test_object": {
+				Block: &configschema.Block{
+					Attributes: map[string]*configschema.Attribute{
+						"value": {
+							Type:      cty.String,
+							Required:  true,
+							Sensitive: true,
+						},
+					},
+				},
+			},
+		},
+	}
+	p.PlanResourceChangeResponse = &providers.PlanResourceChangeResponse{
+		PlannedState: cty.ObjectVal(map[string]cty.Value{
+			"value": cty.StringVal("changed"),
+		}),
+		RequiresReplace: []cty.Path{
+			cty.GetAttrPath("value"),
+		},
+	}
+
+	ctx := testContext2(t, &ContextOpts{
+		Providers: map[addrs.Provider]providers.Factory{
+			addrs.NewDefaultProvider("test"): testProviderFuncFixed(p),
+		},
+	})
+
+	state := states.BuildState(func(s *states.SyncState) {
+		s.SetResourceInstanceCurrent(
+			mustResourceInstanceAddr("test_object.obj"),
+			&states.ResourceInstanceObjectSrc{
+				AttrsJSON: mustParseJson(map[string]any{
+					"value": "original",
+				}),
+				AttrSensitivePaths: []cty.Path{
+					cty.GetAttrPath("value"),
+				},
+				Status: states.ObjectReady,
+			},
+			mustProviderConfig(`provider["registry.terraform.io/hashicorp/test"]`))
+	})
+
+	_, diags := ctx.Plan(m, state, nil)
+	if len(diags) > 0 {
+		t.Errorf("unexpected diags\n%s", diags)
+	}
+}
+
+func TestContext2Plan_selfReferences(t *testing.T) {
+	tcs := []struct {
+		attribute string
+	}{
+		// Note here, the type returned by the lookup doesn't really matter as
+		// we should safely fail before we even get to type checking.
+		{
+			attribute: "count = test_object.a[0].test_string",
+		},
+		{
+			attribute: "count = test_object.a[*].test_string",
+		},
+		{
+			attribute: "for_each = test_object.a[0].test_string",
+		},
+		{
+			attribute: "for_each = test_object.a[*].test_string",
+		},
+		// Even though the can and try functions might normally allow some
+		// fairly crazy things, we're still going to put a stop to a self
+		// reference since it is more akin to a compilation error than some kind
+		// of dynamic exception.
+		{
+			attribute: "for_each = can(test_object.a[0].test_string) ? 0 : 1",
+		},
+		{
+			attribute: "count = try(test_object.a[0].test_string, 0)",
+		},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.attribute, func(t *testing.T) {
+			tmpl := `
+resource "test_object" "a" {
+  %%attribute%%
+}
+`
+			module := strings.ReplaceAll(tmpl, "%%attribute%%", tc.attribute)
+			m := testModuleInline(t, map[string]string{
+				"main.tf": module,
+			})
+
+			p := simpleMockProvider()
+			ctx := testContext2(t, &ContextOpts{
+				Providers: map[addrs.Provider]providers.Factory{
+					// The providers never actually going to get called here, we should
+					// catch the error long before anything happens.
+					addrs.NewDefaultProvider("test"): testProviderFuncFixed(p),
+				},
+			})
+
+			_, diags := ctx.Plan(m, states.NewState(), DefaultPlanOpts)
+			if len(diags) != 1 {
+				t.Fatalf("expected one diag, got %d: %s", len(diags), diags.ErrWithWarnings())
+			}
+
+			got, want := diags.Err().Error(), "Self-referential block: Configuration for test_object.a may not refer to itself."
+			if cmp.Diff(want, got) != "" {
+				t.Fatalf("unexpected error\n%s", cmp.Diff(want, got))
+			}
+		})
+	}
+
+}
+
+func TestContext2Plan_destroySkipsVariableValidations(t *testing.T) {
+	// this validation cannot block destroy, because we can't be sure arbitrary
+	// expressions can be evaluated at all during destroy.
+	m := testModuleInline(t, map[string]string{
+		"main.tf": `
+variable "input" {
+  type = string
+
+  validation {
+    condition = var.input == "foo"
+    error_message = "bad input"
+  }
+}
+
+resource "test_object" "a" {
+  test_string = var.input
+}
+`,
+	})
+
+	p := simpleMockProvider()
+	ctx := testContext2(t, &ContextOpts{
+		Providers: map[addrs.Provider]providers.Factory{
+			addrs.NewDefaultProvider("test"): testProviderFuncFixed(p),
+		},
+	})
+
+	plan, diags := ctx.Plan(m, states.BuildState(func(state *states.SyncState) {
+		state.SetResourceInstanceCurrent(
+			mustResourceInstanceAddr("test_object.a"),
+			&states.ResourceInstanceObjectSrc{
+				Status:    states.ObjectReady,
+				AttrsJSON: []byte(`{"test_string":"foo"}`),
+			},
+			mustProviderConfig(`provider["registry.terraform.io/hashicorp/test"]`),
+		)
+	}), &PlanOpts{
+		Mode: plans.DestroyMode,
+		SetVariables: InputValues{
+			"input": {
+				Value:       cty.StringVal("foo"),
+				SourceType:  ValueFromCLIArg,
+				SourceRange: tfdiags.SourceRange{},
+			},
+		},
+	})
+	if diags.HasErrors() {
+		t.Errorf("expected no errors, but got %s", diags)
+	}
+
+	planResult := plan.Checks.GetObjectResult(addrs.AbsInputVariableInstance{
+		Variable: addrs.InputVariable{
+			Name: "input",
+		},
+		Module: addrs.RootModuleInstance,
+	})
+
+	if planResult.Status != checks.StatusUnknown {
+		// checks should not have been evaluated, because the variable is not required for destroy.
+		t.Errorf("expected checks to be pass but was %s", planResult.Status)
+	}
 }

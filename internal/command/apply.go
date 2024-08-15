@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/hashicorp/terraform/internal/backend"
+	"github.com/hashicorp/terraform/internal/backend/backendrun"
 	"github.com/hashicorp/terraform/internal/command/arguments"
 	"github.com/hashicorp/terraform/internal/command/views"
 	"github.com/hashicorp/terraform/internal/plans/planfile"
@@ -107,6 +107,10 @@ func (c *ApplyCommand) Run(rawArgs []string) int {
 	// Build the operation request
 	opReq, opDiags := c.OperationRequest(be, view, args.ViewType, planFile, args.Operation, args.AutoApprove)
 	diags = diags.Append(opDiags)
+	if diags.HasErrors() {
+		view.Diagnostics(diags)
+		return 1
+	}
 
 	// Collect variable value and add them to the operation request
 	diags = diags.Append(c.GatherVariables(opReq, args.Vars))
@@ -128,7 +132,7 @@ func (c *ApplyCommand) Run(rawArgs []string) int {
 		return 1
 	}
 
-	if op.Result != backend.OperationSuccess {
+	if op.Result != backendrun.OperationSuccess {
 		return op.Result.ExitStatus()
 	}
 
@@ -194,7 +198,7 @@ func (c *ApplyCommand) LoadPlanFile(path string) (*planfile.WrappedPlanFile, tfd
 	return planFile, diags
 }
 
-func (c *ApplyCommand) PrepareBackend(planFile *planfile.WrappedPlanFile, args *arguments.State, viewType arguments.ViewType) (backend.Enhanced, tfdiags.Diagnostics) {
+func (c *ApplyCommand) PrepareBackend(planFile *planfile.WrappedPlanFile, args *arguments.State, viewType arguments.ViewType) (backendrun.OperationsBackend, tfdiags.Diagnostics) {
 	var diags tfdiags.Diagnostics
 
 	// FIXME: we need to apply the state arguments to the meta object here
@@ -204,7 +208,7 @@ func (c *ApplyCommand) PrepareBackend(planFile *planfile.WrappedPlanFile, args *
 	c.Meta.applyStateArguments(args)
 
 	// Load the backend
-	var be backend.Enhanced
+	var be backendrun.OperationsBackend
 	var beDiags tfdiags.Diagnostics
 	if lp, ok := planFile.Local(); ok {
 		plan, err := lp.ReadPlan()
@@ -248,13 +252,13 @@ func (c *ApplyCommand) PrepareBackend(planFile *planfile.WrappedPlanFile, args *
 }
 
 func (c *ApplyCommand) OperationRequest(
-	be backend.Enhanced,
+	be backendrun.OperationsBackend,
 	view views.Apply,
 	viewType arguments.ViewType,
 	planFile *planfile.WrappedPlanFile,
 	args *arguments.Operation,
 	autoApprove bool,
-) (*backend.Operation, tfdiags.Diagnostics) {
+) (*backendrun.Operation, tfdiags.Diagnostics) {
 	var diags tfdiags.Diagnostics
 
 	// Applying changes with dev overrides in effect could make it impossible
@@ -277,8 +281,23 @@ func (c *ApplyCommand) OperationRequest(
 	opReq.PlanRefresh = args.Refresh
 	opReq.Targets = args.Targets
 	opReq.ForceReplace = args.ForceReplace
-	opReq.Type = backend.OperationTypeApply
+	opReq.Type = backendrun.OperationTypeApply
 	opReq.View = view.Operation()
+	opReq.StatePersistInterval = c.Meta.StatePersistInterval()
+
+	// EXPERIMENTAL: maybe enable deferred actions
+	if c.AllowExperimentalFeatures {
+		opReq.DeferralAllowed = args.DeferralAllowed
+	} else if args.DeferralAllowed {
+		// Belated flag parse error, since we don't know about experiments
+		// support at actual parse time.
+		diags = diags.Append(tfdiags.Sourceless(
+			tfdiags.Error,
+			"Failed to parse command-line flags",
+			"The -allow-deferral flag is only valid in experimental builds of Terraform.",
+		))
+		return nil, diags
+	}
 
 	var err error
 	opReq.ConfigLoader, err = c.initConfigLoader()
@@ -290,7 +309,7 @@ func (c *ApplyCommand) OperationRequest(
 	return opReq, diags
 }
 
-func (c *ApplyCommand) GatherVariables(opReq *backend.Operation, args *arguments.Vars) tfdiags.Diagnostics {
+func (c *ApplyCommand) GatherVariables(opReq *backendrun.Operation, args *arguments.Vars) tfdiags.Diagnostics {
 	var diags tfdiags.Diagnostics
 
 	// FIXME the arguments package currently trivially gathers variable related
@@ -301,12 +320,12 @@ func (c *ApplyCommand) GatherVariables(opReq *backend.Operation, args *arguments
 	// package directly, removing this shim layer.
 
 	varArgs := args.All()
-	items := make([]rawFlag, len(varArgs))
+	items := make([]arguments.FlagNameValue, len(varArgs))
 	for i := range varArgs {
 		items[i].Name = varArgs[i].Name
 		items[i].Value = varArgs[i].Value
 	}
-	c.Meta.variableArgs = rawFlags{items: &items}
+	c.Meta.variableArgs = arguments.FlagNameValueSlice{Items: &items}
 	opReq.Variables, diags = c.collectVariableValues()
 
 	return diags

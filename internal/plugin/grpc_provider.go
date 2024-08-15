@@ -350,6 +350,9 @@ func (p *GRPCProvider) ConfigureProvider(r providers.ConfigureProviderRequest) (
 		Config: &proto.DynamicValue{
 			Msgpack: mp,
 		},
+		ClientCapabilities: &proto.ClientCapabilities{
+			DeferralAllowed: r.ClientCapabilities.DeferralAllowed,
+		},
 	}
 
 	protoResp, err := p.client.Configure(p.ctx, protoReq)
@@ -402,6 +405,9 @@ func (p *GRPCProvider) ReadResource(r providers.ReadResourceRequest) (resp provi
 		TypeName:     r.TypeName,
 		CurrentState: &proto.DynamicValue{Msgpack: mp},
 		Private:      r.Private,
+		ClientCapabilities: &proto.ClientCapabilities{
+			DeferralAllowed: r.ClientCapabilities.DeferralAllowed,
+		},
 	}
 
 	if metaSchema.Block != nil {
@@ -418,6 +424,7 @@ func (p *GRPCProvider) ReadResource(r providers.ReadResourceRequest) (resp provi
 		resp.Diagnostics = resp.Diagnostics.Append(grpcErr(err))
 		return resp
 	}
+	resp.Deferred = convert.ProtoToDeferred(protoResp.Deferred)
 	resp.Diagnostics = resp.Diagnostics.Append(convert.ProtoToDiagnostics(protoResp.Diagnostics))
 
 	state, err := decodeDynamicValue(protoResp.NewState, resSchema.Block.ImpliedType())
@@ -481,6 +488,9 @@ func (p *GRPCProvider) PlanResourceChange(r providers.PlanResourceChangeRequest)
 		Config:           &proto.DynamicValue{Msgpack: configMP},
 		ProposedNewState: &proto.DynamicValue{Msgpack: propMP},
 		PriorPrivate:     r.PriorPrivate,
+		ClientCapabilities: &proto.ClientCapabilities{
+			DeferralAllowed: r.ClientCapabilities.DeferralAllowed,
+		},
 	}
 
 	if metaSchema.Block != nil {
@@ -518,6 +528,8 @@ func (p *GRPCProvider) PlanResourceChange(r providers.PlanResourceChangeRequest)
 	resp.PlannedPrivate = protoResp.PlannedPrivate
 
 	resp.LegacyTypeSystem = protoResp.LegacyTypeSystem
+
+	resp.Deferred = convert.ProtoToDeferred(protoResp.Deferred)
 
 	return resp
 }
@@ -610,6 +622,9 @@ func (p *GRPCProvider) ImportResourceState(r providers.ImportResourceStateReques
 	protoReq := &proto.ImportResourceState_Request{
 		TypeName: r.TypeName,
 		Id:       r.ID,
+		ClientCapabilities: &proto.ClientCapabilities{
+			DeferralAllowed: r.ClientCapabilities.DeferralAllowed,
+		},
 	}
 
 	protoResp, err := p.client.ImportResourceState(p.ctx, protoReq)
@@ -618,6 +633,7 @@ func (p *GRPCProvider) ImportResourceState(r providers.ImportResourceStateReques
 		return resp
 	}
 	resp.Diagnostics = resp.Diagnostics.Append(convert.ProtoToDiagnostics(protoResp.Diagnostics))
+	resp.Deferred = convert.ProtoToDeferred(protoResp.Deferred)
 
 	for _, imported := range protoResp.ImportedResources {
 		resource := providers.ImportedResource{
@@ -719,6 +735,9 @@ func (p *GRPCProvider) ReadDataSource(r providers.ReadDataSourceRequest) (resp p
 		Config: &proto.DynamicValue{
 			Msgpack: config,
 		},
+		ClientCapabilities: &proto.ClientCapabilities{
+			DeferralAllowed: r.ClientCapabilities.DeferralAllowed,
+		},
 	}
 
 	if metaSchema.Block != nil {
@@ -743,6 +762,7 @@ func (p *GRPCProvider) ReadDataSource(r providers.ReadDataSourceRequest) (resp p
 		return resp
 	}
 	resp.State = state
+	resp.Deferred = convert.ProtoToDeferred(protoResp.Deferred)
 
 	return resp
 }

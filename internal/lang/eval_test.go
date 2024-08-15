@@ -9,11 +9,13 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/hashicorp/hcl/v2"
-	"github.com/hashicorp/hcl/v2/hclsyntax"
-
 	"github.com/hashicorp/terraform/internal/addrs"
 	"github.com/hashicorp/terraform/internal/configs/configschema"
+	"github.com/hashicorp/terraform/internal/instances"
+	"github.com/hashicorp/terraform/internal/lang/langrefs"
+
+	"github.com/hashicorp/hcl/v2"
+	"github.com/hashicorp/hcl/v2/hclsyntax"
 
 	"github.com/zclconf/go-cty/cty"
 	ctyjson "github.com/zclconf/go-cty/cty/json"
@@ -419,7 +421,7 @@ func TestScopeEvalContext(t *testing.T) {
 		},
 	}
 
-	exec := func(t *testing.T, parseRef ParseRef, test struct {
+	exec := func(t *testing.T, parseRef langrefs.ParseRef, test struct {
 		Expr        string
 		Want        map[string]cty.Value
 		TestingOnly bool
@@ -433,7 +435,7 @@ func TestScopeEvalContext(t *testing.T) {
 			return
 		}
 
-		refs, refsDiags := ReferencesInExpr(parseRef, expr)
+		refs, refsDiags := langrefs.ReferencesInExpr(parseRef, expr)
 		if refsDiags.HasErrors() {
 			t.Fatal(refsDiags.Err())
 		}
@@ -827,7 +829,7 @@ func TestScopeEvalSelfBlock(t *testing.T) {
 	tests := []struct {
 		Config  string
 		Self    cty.Value
-		KeyData RepetitionData
+		KeyData instances.RepetitionData
 		Want    map[string]cty.Value
 	}{
 		{
@@ -835,7 +837,7 @@ func TestScopeEvalSelfBlock(t *testing.T) {
 			Self: cty.ObjectVal(map[string]cty.Value{
 				"foo": cty.StringVal("bar"),
 			}),
-			KeyData: RepetitionData{
+			KeyData: instances.RepetitionData{
 				CountIndex: cty.NumberIntVal(0),
 			},
 			Want: map[string]cty.Value{
@@ -845,7 +847,7 @@ func TestScopeEvalSelfBlock(t *testing.T) {
 		},
 		{
 			Config: `num = count.index`,
-			KeyData: RepetitionData{
+			KeyData: instances.RepetitionData{
 				CountIndex: cty.NumberIntVal(0),
 			},
 			Want: map[string]cty.Value{
@@ -855,7 +857,7 @@ func TestScopeEvalSelfBlock(t *testing.T) {
 		},
 		{
 			Config: `attr = each.key`,
-			KeyData: RepetitionData{
+			KeyData: instances.RepetitionData{
 				EachKey: cty.StringVal("a"),
 			},
 			Want: map[string]cty.Value{

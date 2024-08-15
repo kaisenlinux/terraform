@@ -13,7 +13,7 @@ import (
 
 	"github.com/hashicorp/terraform/internal/addrs"
 	"github.com/hashicorp/terraform/internal/collections"
-	"github.com/hashicorp/terraform/internal/lang"
+	"github.com/hashicorp/terraform/internal/instances"
 	"github.com/hashicorp/terraform/internal/promising"
 	"github.com/hashicorp/terraform/internal/providers"
 	"github.com/hashicorp/terraform/internal/stacks/stackaddrs"
@@ -32,7 +32,7 @@ import (
 type ProviderInstance struct {
 	provider   *Provider
 	key        addrs.InstanceKey
-	repetition lang.RepetitionData
+	repetition instances.RepetitionData
 
 	main *Main
 
@@ -40,7 +40,7 @@ type ProviderInstance struct {
 	client       perEvalPhase[promising.Once[withDiagnostics[providers.Interface]]]
 }
 
-func newProviderInstance(provider *Provider, key addrs.InstanceKey, repetition lang.RepetitionData) *ProviderInstance {
+func newProviderInstance(provider *Provider, key addrs.InstanceKey, repetition instances.RepetitionData) *ProviderInstance {
 	return &ProviderInstance{
 		provider:   provider,
 		key:        key,
@@ -60,7 +60,7 @@ func (p *ProviderInstance) Addr() stackaddrs.AbsProviderConfigInstance {
 	}
 }
 
-func (p *ProviderInstance) RepetitionData() lang.RepetitionData {
+func (p *ProviderInstance) RepetitionData() instances.RepetitionData {
 	return p.repetition
 }
 
@@ -206,10 +206,28 @@ func (p *ProviderInstance) CheckClient(ctx context.Context, phase EvalPhase) (pr
 				return stubConfiguredProvider{unknown: false}, diags
 			}
 
+			// If the context we recieved gets cancelled then we want providers
+			// to try to cancel any operations they have in progress, so we'll
+			// watch for that in a separate goroutine. This extra context
+			// is here just so we can avoid leaking this goroutine if the
+			// parent doesn't get cancelled.
+			providerCtx, localCancel := context.WithCancel(ctx)
+			go func() {
+				<-providerCtx.Done()
+				if ctx.Err() == context.Canceled {
+					// Not all providers respond to this, but some will quickly
+					// abort operations currently in progress and return a
+					// cancellation error, thus allowing us to halt more quickly
+					// when interrupted.
+					client.Stop()
+				}
+			}()
+
 			// If this provider is implemented as a separate plugin then we
 			// must terminate its child process once evaluation is complete.
 			p.main.RegisterCleanup(func(ctx context.Context) tfdiags.Diagnostics {
 				var diags tfdiags.Diagnostics
+				localCancel() // make sure our cancel-monitoring goroutine terminates
 				err := client.Close()
 				if err != nil {
 					diags = diags.Append(&hcl.Diagnostic{
@@ -306,6 +324,18 @@ func (p *ProviderInstance) CheckApply(ctx context.Context) ([]stackstate.Applied
 // tracingName implements Plannable.
 func (p *ProviderInstance) tracingName() string {
 	return p.Addr().String()
+}
+
+// reportNamedPromises implements namedPromiseReporter.
+func (p *ProviderInstance) reportNamedPromises(cb func(id promising.PromiseID, name string)) {
+	name := p.Addr().String()
+	clientName := name + " plugin client"
+	p.providerArgs.Each(func(ep EvalPhase, o *promising.Once[withDiagnostics[cty.Value]]) {
+		cb(o.PromiseID(), name)
+	})
+	p.client.Each(func(ep EvalPhase, o *promising.Once[withDiagnostics[providers.Interface]]) {
+		cb(o.PromiseID(), clientName)
+	})
 }
 
 // stubConfiguredProvider is a placeholder provider used when ConfigureProvider

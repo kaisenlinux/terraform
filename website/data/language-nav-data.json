@@ -366,6 +366,10 @@
             "href": "/language/functions/substr"
           },
           {
+            "title": "<code>templatestring</code>",
+            "href": "/language/functions/templatestring"
+          },
+          {
             "title": "<code>title</code>",
             "href": "/language/functions/title"
           },
@@ -893,6 +897,11 @@
         "path": "functions/templatefile",
         "hidden": true
       },
+      {
+        "title": "templatestring",
+        "path": "functions/templatestring",
+        "hidden": true
+      },
       { "title": "terraform-encode_tfvars", "path": "functions/terraform-encode_tfvars", "hidden": true },
       { "title": "terraform-decode_tfvars", "path": "functions/terraform-decode_tfvars", "hidden": true },
       { "title": "terraform-encode_expr", "path": "functions/terraform-encode_expr", "hidden": true },
@@ -1093,7 +1102,7 @@
     ]
   },
   {
-    "title": "Upgrading to Terraform v1.7",
+    "title": "Upgrading to Terraform v1.9",
     "path": "upgrade-guides"
   },
   {

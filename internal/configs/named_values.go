@@ -178,10 +178,11 @@ func decodeVariableBlock(block *hcl.Block, override bool) (*Variable, hcl.Diagno
 		switch block.Type {
 
 		case "validation":
-			vv, moreDiags := decodeVariableValidationBlock(v.Name, block, override)
+			vv, moreDiags := decodeCheckRuleBlock(block, override)
 			diags = append(diags, moreDiags...)
-			v.Validations = append(v.Validations, vv)
+			diags = append(diags, checkVariableValidationBlock(v.Name, vv)...)
 
+			v.Validations = append(v.Validations, vv)
 		default:
 			// The above cases should be exhaustive for all block types
 			// defined in variableBlockSchema
@@ -322,72 +323,6 @@ func (m VariableParsingMode) Parse(name, value string) (cty.Value, hcl.Diagnosti
 		// Should never happen
 		panic(fmt.Errorf("Parse called on invalid VariableParsingMode %#v", m))
 	}
-}
-
-// decodeVariableValidationBlock is a wrapper around decodeCheckRuleBlock
-// that imposes the additional rule that the condition expression can refer
-// only to an input variable of the given name.
-func decodeVariableValidationBlock(varName string, block *hcl.Block, override bool) (*CheckRule, hcl.Diagnostics) {
-	vv, diags := decodeCheckRuleBlock(block, override)
-	if vv.Condition != nil {
-		// The validation condition can only refer to the variable itself,
-		// to ensure that the variable declaration can't create additional
-		// edges in the dependency graph.
-		goodRefs := 0
-		for _, traversal := range vv.Condition.Variables() {
-			ref, moreDiags := addrs.ParseRef(traversal)
-			if !moreDiags.HasErrors() {
-				if addr, ok := ref.Subject.(addrs.InputVariable); ok {
-					if addr.Name == varName {
-						goodRefs++
-						continue // Reference is valid
-					}
-				}
-			}
-			// If we fall out here then the reference is invalid.
-			diags = diags.Append(&hcl.Diagnostic{
-				Severity: hcl.DiagError,
-				Summary:  "Invalid reference in variable validation",
-				Detail:   fmt.Sprintf("The condition for variable %q can only refer to the variable itself, using var.%s.", varName, varName),
-				Subject:  traversal.SourceRange().Ptr(),
-			})
-		}
-		if goodRefs < 1 {
-			diags = diags.Append(&hcl.Diagnostic{
-				Severity: hcl.DiagError,
-				Summary:  "Invalid variable validation condition",
-				Detail:   fmt.Sprintf("The condition for variable %q must refer to var.%s in order to test incoming values.", varName, varName),
-				Subject:  vv.Condition.Range().Ptr(),
-			})
-		}
-	}
-
-	if vv.ErrorMessage != nil {
-		// The same applies to the validation error message, except that
-		// references are not required. A string literal is a valid error
-		// message.
-		goodRefs := 0
-		for _, traversal := range vv.ErrorMessage.Variables() {
-			ref, moreDiags := addrs.ParseRef(traversal)
-			if !moreDiags.HasErrors() {
-				if addr, ok := ref.Subject.(addrs.InputVariable); ok {
-					if addr.Name == varName {
-						goodRefs++
-						continue // Reference is valid
-					}
-				}
-			}
-			// If we fall out here then the reference is invalid.
-			diags = diags.Append(&hcl.Diagnostic{
-				Severity: hcl.DiagError,
-				Summary:  "Invalid reference in variable validation",
-				Detail:   fmt.Sprintf("The error message for variable %q can only refer to the variable itself, using var.%s.", varName, varName),
-				Subject:  traversal.SourceRange().Ptr(),
-			})
-		}
-	}
-
-	return vv, diags
 }
 
 // Output represents an "output" block in a module or file.
@@ -569,4 +504,30 @@ var outputBlockSchema = &hcl.BodySchema{
 		{Type: "precondition"},
 		{Type: "postcondition"},
 	},
+}
+
+func checkVariableValidationBlock(varName string, vv *CheckRule) hcl.Diagnostics {
+	var diags hcl.Diagnostics
+
+	if vv.Condition != nil {
+		// The validation condition must include a reference to the variable itself
+		for _, traversal := range vv.Condition.Variables() {
+			ref, moreDiags := addrs.ParseRef(traversal)
+			if !moreDiags.HasErrors() {
+				if addr, ok := ref.Subject.(addrs.InputVariable); ok {
+					if addr.Name == varName {
+						return nil
+					}
+				}
+			}
+		}
+
+		return diags.Append(&hcl.Diagnostic{
+			Severity: hcl.DiagError,
+			Summary:  "Invalid variable validation condition",
+			Detail:   fmt.Sprintf("The condition for variable %q must refer to var.%s in order to test incoming values.", varName, varName),
+			Subject:  vv.Condition.Range().Ptr(),
+		})
+	}
+	return nil
 }

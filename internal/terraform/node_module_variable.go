@@ -13,7 +13,8 @@ import (
 	"github.com/hashicorp/terraform/internal/addrs"
 	"github.com/hashicorp/terraform/internal/configs"
 	"github.com/hashicorp/terraform/internal/dag"
-	"github.com/hashicorp/terraform/internal/lang"
+	"github.com/hashicorp/terraform/internal/instances"
+	"github.com/hashicorp/terraform/internal/lang/langrefs"
 	"github.com/hashicorp/terraform/internal/tfdiags"
 )
 
@@ -67,6 +68,7 @@ func (n *nodeExpandModuleVariable) DynamicExpand(ctx EvalContext) (*Graph, tfdia
 	forEachModuleInstance(expander, n.Module, false, func(module addrs.ModuleInstance) {
 		addr := n.Addr.Absolute(module)
 		if checkableAddrs != nil {
+			log.Printf("[TRACE] nodeExpandModuleVariable: found checkable object %s", addr)
 			checkableAddrs.Add(addr)
 		}
 
@@ -131,7 +133,7 @@ func (n *nodeExpandModuleVariable) References() []*addrs.Reference {
 	// where our associated variable was declared, which is correct because
 	// our value expression is assigned within a "module" block in the parent
 	// module.
-	refs, _ := lang.ReferencesInExpr(addrs.ParseRef, n.Expr)
+	refs, _ := langrefs.ReferencesInExpr(addrs.ParseRef, n.Expr)
 	return refs
 }
 
@@ -143,6 +145,25 @@ func (n *nodeExpandModuleVariable) ReferenceOutside() (selfPath, referencePath a
 // GraphNodeReferenceable
 func (n *nodeExpandModuleVariable) ReferenceableAddrs() []addrs.Referenceable {
 	return []addrs.Referenceable{n.Addr}
+}
+
+// variableValidationRules implements [graphNodeValidatableVariable].
+func (n *nodeExpandModuleVariable) variableValidationRules() (addrs.ConfigInputVariable, []*configs.CheckRule, hcl.Range) {
+	var defnRange hcl.Range
+	if n.Expr != nil { // should always be set in real calls, but not always in tests
+		defnRange = n.Expr.Range()
+	}
+	if n.DestroyApply {
+		// We don't perform any variable validation during the apply phase
+		// of a destroy, because validation rules typically aren't prepared
+		// for dealing with things already having been destroyed.
+		return n.Addr.InModule(n.Module), nil, defnRange
+	}
+	var rules []*configs.CheckRule
+	if n.Config != nil { // always in normal code, but sometimes not in unit tests
+		rules = n.Config.Validations
+	}
+	return n.Addr.InModule(n.Module), rules, defnRange
 }
 
 // nodeModuleVariable represents a module variable input during
@@ -217,13 +238,9 @@ func (n *nodeModuleVariable) Execute(ctx EvalContext, op walkOperation) (diags t
 	// during expression evaluation.
 	ctx.NamedValues().SetInputVariableValue(n.Addr, val)
 
-	// Skip evalVariableValidations during destroy operations. We still want
-	// to evaluate the variable in case it is used to initialise providers
-	// or something downstream but we don't need to report on the success
-	// or failure of any validations for destroy operations.
-	if !n.DestroyApply {
-		diags = diags.Append(evalVariableValidations(n.Addr, n.Config, n.Expr, ctx))
-	}
+	// Custom validation rules are handled by a separate graph node of type
+	// nodeVariableValidation, added by variableValidationTransformer.
+
 	return diags
 }
 
@@ -249,7 +266,7 @@ func (n *nodeModuleVariable) evalModuleVariable(ctx EvalContext, validateOnly bo
 	var givenVal cty.Value
 	var errSourceRange tfdiags.SourceRange
 	if expr := n.Expr; expr != nil {
-		var moduleInstanceRepetitionData lang.RepetitionData
+		var moduleInstanceRepetitionData instances.RepetitionData
 
 		switch {
 		case validateOnly:
@@ -258,7 +275,7 @@ func (n *nodeModuleVariable) evalModuleVariable(ctx EvalContext, validateOnly bo
 			// TODO: Ideally we should vary the placeholder we use here based
 			// on how the module call repetition was configured, but we don't
 			// have enough information here to decide that.
-			moduleInstanceRepetitionData = lang.TotallyUnknownRepetitionData
+			moduleInstanceRepetitionData = instances.TotallyUnknownRepetitionData
 
 		default:
 			// Get the repetition data for this module instance,
@@ -336,7 +353,7 @@ func (n *nodeModuleVariableInPartialModule) Execute(ctx EvalContext, op walkOper
 	// TODO: Ideally we should vary the placeholder we use here based
 	// on how the module call repetition was configured, but we don't
 	// have enough information here to decide that.
-	moduleInstanceRepetitionData := lang.TotallyUnknownRepetitionData
+	moduleInstanceRepetitionData := instances.TotallyUnknownRepetitionData
 
 	// NOTE WELL: Input variables are a little strange in that they announce
 	// themselves as belonging to the caller of the module they are declared

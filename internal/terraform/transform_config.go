@@ -11,7 +11,6 @@ import (
 	"github.com/hashicorp/terraform/internal/addrs"
 	"github.com/hashicorp/terraform/internal/configs"
 	"github.com/hashicorp/terraform/internal/dag"
-	"github.com/hashicorp/terraform/internal/experiments"
 	"github.com/hashicorp/terraform/internal/tfdiags"
 )
 
@@ -51,14 +50,6 @@ type ConfigTransformer struct {
 	// try to delete the imported resource unless the config is updated
 	// manually.
 	generateConfigPathForImportTargets string
-
-	// TEMP: [ConfigTransformer.Transform] sets this to true if at least one
-	// module in the configuration has the "unknown_instances" language
-	// experiment enabled, because this particular experiment has cross-module
-	// implications (a module call with unknown instances affects everything
-	// beneath it in the tree) but we want to avoid activating the experimental
-	// code in the common case where no module is using it at all.
-	unknownInstancesExperimentEnabled bool
 }
 
 func (t *ConfigTransformer) Transform(g *Graph) error {
@@ -71,15 +62,9 @@ func (t *ConfigTransformer) Transform(g *Graph) error {
 		return nil
 	}
 
-	// TEMP: Before we go further, we'll decide whether we're going to activate
-	// the experimental new behavior for the "unknown_instances" experiment.
-	// See the docstring for [ConfigTransformer.unknownInstancesExperimentEnabled]
-	// for more details.
-	t.Config.DeepEach(func(c *configs.Config) {
-		if c.Module != nil && c.Module.ActiveExperiments.Has(experiments.UnknownInstances) {
-			t.unknownInstancesExperimentEnabled = true
-		}
-	})
+	if err := t.validateImportTargets(); err != nil {
+		return err
+	}
 
 	// Start the transformation process
 	return t.transform(g, t.Config)
@@ -180,10 +165,6 @@ func (t *ConfigTransformer) transformSingle(g *Graph, config *configs.Config) er
 				Module:   path,
 			},
 			importTargets: imports,
-
-			// TEMP: See the docs for this field in [ConfigTransformer] for
-			// more information.
-			unknownInstancesExperimentEnabled: t.unknownInstancesExperimentEnabled,
 		}
 
 		var node dag.Vertex = abstract
@@ -196,13 +177,6 @@ func (t *ConfigTransformer) transformSingle(g *Graph, config *configs.Config) er
 
 	// If any import targets were not claimed by resources and we are
 	// generating configuration, then let's add them into the graph now.
-
-	// TODO: use diagnostics to collect detailed errors for now, even though we
-	// can only return an error from here. This gives the user more immediate
-	// feedback, rather than waiting an unknown amount of time for the plan to
-	// fail.
-	var diags tfdiags.Diagnostics
-
 	for _, i := range importTargets {
 		if path.IsRoot() {
 			// If we have a single instance import target in the root module, we
@@ -235,8 +209,49 @@ func (t *ConfigTransformer) transformSingle(g *Graph, config *configs.Config) er
 				g.Add(node)
 				continue
 			}
+		}
+	}
+	return nil
+}
 
-			if t.generateConfigPathForImportTargets != "" && !canGenerate {
+// validateImportTargets ensures that the import target resources exist in the
+// configuration. We do this here rather than statically during config loading
+// to have any CLI imports included, and to provide feedback about possible
+// config generation.
+func (t *ConfigTransformer) validateImportTargets() error {
+	var diags tfdiags.Diagnostics
+
+	for _, i := range t.importTargets {
+		var toResource addrs.ConfigResource
+		switch {
+		case i.Config != nil:
+			toResource = i.Config.ToResource
+		default:
+			toResource = i.LegacyAddr.ConfigResource()
+		}
+
+		moduleCfg := t.Config.Root.Descendent(toResource.Module)
+		if moduleCfg != nil {
+			res := moduleCfg.Module.ResourceByAddr(toResource.Resource)
+			if res != nil {
+				// the target config exists, which is all we're looking for at this point.
+				continue
+			}
+		}
+
+		if toResource.Module.IsRoot() {
+			var toDiags tfdiags.Diagnostics
+			traversal, hd := hcl.AbsTraversalForExpr(i.Config.To)
+			toDiags = toDiags.Append(hd)
+			to, td := addrs.ParseAbsResourceInstance(traversal)
+			toDiags = toDiags.Append(td)
+			canGenerate := !toDiags.HasErrors() && to.Resource.Key == addrs.NoKey
+
+			if t.generateConfigPathForImportTargets != "" {
+				if canGenerate {
+					continue
+				}
+
 				diags = diags.Append(&hcl.Diagnostic{
 					Severity: hcl.DiagError,
 					Summary:  "Cannot generate configuration",

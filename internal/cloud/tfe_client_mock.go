@@ -19,8 +19,8 @@ import (
 	"time"
 
 	tfe "github.com/hashicorp/go-tfe"
-	"github.com/mitchellh/copystructure"
 
+	"github.com/hashicorp/terraform/internal/copy"
 	tfversion "github.com/hashicorp/terraform/version"
 )
 
@@ -1038,11 +1038,8 @@ func (m *MockProjects) List(ctx context.Context, organization string, options *t
 	pl := &tfe.ProjectList{}
 
 	for _, project := range m.projects {
-		pc, err := copystructure.Copy(project)
-		if err != nil {
-			panic(err)
-		}
-		pl.Items = append(pl.Items, pc.(*tfe.Project))
+		pc := copy.DeepCopyValue(project)
+		pl.Items = append(pl.Items, pc)
 	}
 
 	pl.Pagination = &tfe.Pagination{
@@ -1063,12 +1060,8 @@ func (m *MockProjects) Read(ctx context.Context, projectID string) (*tfe.Project
 	}
 
 	// we must return a copy for the client
-	pc, err := copystructure.Copy(p)
-	if err != nil {
-		panic(err)
-	}
-
-	return pc.(*tfe.Project), nil
+	pc := copy.DeepCopyValue(p)
+	return pc, nil
 }
 
 func (m *MockProjects) Update(ctx context.Context, projectID string, options tfe.ProjectUpdateOptions) (*tfe.Project, error) {
@@ -1080,12 +1073,8 @@ func (m *MockProjects) Update(ctx context.Context, projectID string, options tfe
 	p.Name = *options.Name
 
 	// we must return a copy for the client
-	pc, err := copystructure.Copy(p)
-	if err != nil {
-		panic(err)
-	}
-
-	return pc.(*tfe.Project), nil
+	pc := copy.DeepCopyValue(p)
+	return pc, nil
 }
 
 func (m *MockProjects) Delete(ctx context.Context, projectID string) error {
@@ -1257,11 +1246,8 @@ func (m *MockRuns) List(ctx context.Context, workspaceID string, options *tfe.Ru
 
 	rl := &tfe.RunList{}
 	for _, run := range m.workspaces[w.ID] {
-		rc, err := copystructure.Copy(run)
-		if err != nil {
-			panic(err)
-		}
-		rl.Items = append(rl.Items, rc.(*tfe.Run))
+		rc := copy.DeepCopyValue(run)
+		rl.Items = append(rl.Items, rc)
 	}
 
 	rl.Pagination = &tfe.Pagination{
@@ -1422,11 +1408,7 @@ func (m *MockRuns) ReadWithOptions(ctx context.Context, runID string, options *t
 	}
 
 	// we must return a copy for the client
-	rc, err := copystructure.Copy(r)
-	if err != nil {
-		panic(err)
-	}
-	r = rc.(*tfe.Run)
+	r = copy.DeepCopyValue(r)
 
 	// After copying, handle includes... or at least, any includes we're known to rely on.
 	if options != nil {

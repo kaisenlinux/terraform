@@ -6,8 +6,6 @@ package terraform
 import (
 	"fmt"
 	"log"
-	"os"
-	"path/filepath"
 	"time"
 
 	"github.com/hashicorp/hcl/v2"
@@ -98,7 +96,7 @@ func (e *Evaluator) Scope(data lang.Data, self addrs.Referenceable, source addrs
 // evaluationStateData is an implementation of lang.Data that resolves
 // references primarily (but not exclusively) using information from a State.
 type evaluationStateData struct {
-	Evaluator *Evaluator
+	*evaluationData
 
 	// ModulePath is the path through the dynamic module tree to the module
 	// that references will be resolved relative to.
@@ -118,7 +116,7 @@ type evaluationStateData struct {
 
 // InstanceKeyEvalData is the old name for instances.RepetitionData, aliased
 // here for compatibility. In new code, use instances.RepetitionData instead.
-type InstanceKeyEvalData = lang.RepetitionData
+type InstanceKeyEvalData = instances.RepetitionData
 
 // EvalDataForInstanceKey constructs a suitable InstanceKeyEvalData for
 // evaluating in a context that has the given instance key.
@@ -482,75 +480,6 @@ func (d *evaluationStateData) GetModule(addr addrs.ModuleCall, rng tfdiags.Sourc
 	}
 }
 
-func (d *evaluationStateData) GetPathAttr(addr addrs.PathAttr, rng tfdiags.SourceRange) (cty.Value, tfdiags.Diagnostics) {
-	var diags tfdiags.Diagnostics
-	switch addr.Name {
-
-	case "cwd":
-		var err error
-		var wd string
-		if d.Evaluator.Meta != nil {
-			// Meta is always non-nil in the normal case, but some test cases
-			// are not so realistic.
-			wd = d.Evaluator.Meta.OriginalWorkingDir
-		}
-		if wd == "" {
-			wd, err = os.Getwd()
-			if err != nil {
-				diags = diags.Append(&hcl.Diagnostic{
-					Severity: hcl.DiagError,
-					Summary:  `Failed to get working directory`,
-					Detail:   fmt.Sprintf(`The value for path.cwd cannot be determined due to a system error: %s`, err),
-					Subject:  rng.ToHCL().Ptr(),
-				})
-				return cty.DynamicVal, diags
-			}
-		}
-		// The current working directory should always be absolute, whether we
-		// just looked it up or whether we were relying on ContextMeta's
-		// (possibly non-normalized) path.
-		wd, err = filepath.Abs(wd)
-		if err != nil {
-			diags = diags.Append(&hcl.Diagnostic{
-				Severity: hcl.DiagError,
-				Summary:  `Failed to get working directory`,
-				Detail:   fmt.Sprintf(`The value for path.cwd cannot be determined due to a system error: %s`, err),
-				Subject:  rng.ToHCL().Ptr(),
-			})
-			return cty.DynamicVal, diags
-		}
-
-		return cty.StringVal(filepath.ToSlash(wd)), diags
-
-	case "module":
-		moduleConfig := d.Evaluator.Config.DescendentForInstance(d.ModulePath)
-		if moduleConfig == nil {
-			// should never happen, since we can't be evaluating in a module
-			// that wasn't mentioned in configuration.
-			panic(fmt.Sprintf("module.path read from module %s, which has no configuration", d.ModulePath))
-		}
-		sourceDir := moduleConfig.Module.SourceDir
-		return cty.StringVal(filepath.ToSlash(sourceDir)), diags
-
-	case "root":
-		sourceDir := d.Evaluator.Config.Module.SourceDir
-		return cty.StringVal(filepath.ToSlash(sourceDir)), diags
-
-	default:
-		suggestion := didyoumean.NameSuggestion(addr.Name, []string{"cwd", "module", "root"})
-		if suggestion != "" {
-			suggestion = fmt.Sprintf(" Did you mean %q?", suggestion)
-		}
-		diags = diags.Append(&hcl.Diagnostic{
-			Severity: hcl.DiagError,
-			Summary:  `Invalid "path" attribute`,
-			Detail:   fmt.Sprintf(`The "path" object does not have an attribute named %q.%s`, addr.Name, suggestion),
-			Subject:  rng.ToHCL().Ptr(),
-		})
-		return cty.DynamicVal, diags
-	}
-}
-
 func (d *evaluationStateData) GetResource(addr addrs.Resource, rng tfdiags.SourceRange) (cty.Value, tfdiags.Diagnostics) {
 	var diags tfdiags.Diagnostics
 	// First we'll consult the configuration to see if an resource of this
@@ -574,20 +503,21 @@ func (d *evaluationStateData) GetResource(addr addrs.Resource, rng tfdiags.Sourc
 		return cty.DynamicVal, diags
 	}
 
-	// Much of this function was written before we had factored out the
-	// handling of instance keys into the separate instance expander model,
-	// and so it does a bunch of instance-related work itself below. While
-	// the possibility of unknown instance keys remains experimental
-	// (behind the unknown_instances language experiment) we'll use this
-	// function only for detecting that experimental situation, but leave
-	// the rest of this function unchanged for now to minimize the chances
-	// of the experiment code affecting someone who isn't participating.
+	// Much of this function was written before we had factored out the handling
+	// of instance keys into the separate instance expander model, and so it
+	// does a bunch of instance-related work itself below.
 	//
-	// TODO: If we decide to stabilize the unknown_instances experiment
-	// then it would be nice to finally rework this function to rely
-	// on the ResourceInstanceKeys result for _all_ of its work, rather
-	// than continuing to duplicate a bunch of the logic we've tried to
-	// encapsulate over ther already.
+	// Currently, unknown instance keys are only possible when planning with
+	// DeferralAllowed set to true in the PlanOpts, which should only be the
+	// case in the stacks runtime (not the "normal terraform" modules runtime).
+	// Thus, we have some amount of duplicated code remaining, to be more
+	// certain that stacks-specific behaviors won't leak out into the standard
+	// runtime.
+	//
+	// TODO: When deferred actions are more stable and robust in stacks, it
+	// would be nice to rework this function to rely on the ResourceInstanceKeys
+	// result for _all_ of its work, rather than continuing to duplicate a bunch
+	// of the logic we've tried to encapsulate over ther already.
 	if d.Operation == walkPlan {
 		if _, _, hasUnknownKeys := d.Evaluator.Instances.ResourceInstanceKeys(addr.Absolute(moduleAddr)); hasUnknownKeys {
 			// There really isn't anything interesting we can do in this situation,
@@ -729,7 +659,10 @@ func (d *evaluationStateData) GetResource(addr addrs.Resource, rng tfdiags.Sourc
 
 			// Unlike decoding state, decoding a change does not automatically
 			// mark values.
-			instances[key] = val.MarkWithPaths(change.AfterValMarks)
+			// FIXME: Correct that inconsistency by moving this logic into
+			// the decoder function in the plans package, so that we can
+			// test that behavior being implemented in only one place.
+			instances[key] = marks.MarkPaths(val, marks.Sensitive, change.AfterSensitivePaths)
 			continue
 		}
 
@@ -836,68 +769,6 @@ func (d *evaluationStateData) getResourceSchema(addr addrs.Resource, providerAdd
 	return schema
 }
 
-func (d *evaluationStateData) GetTerraformAttr(addr addrs.TerraformAttr, rng tfdiags.SourceRange) (cty.Value, tfdiags.Diagnostics) {
-	var diags tfdiags.Diagnostics
-
-	if d.Evaluator.Meta == nil || d.Evaluator.Meta.Env == "" {
-		// The absense of an "env" (really: workspace) name suggests that
-		// we're running in a non-workspace context, such as in a component
-		// of a stack. terraform.workspace -- and the terraform symbol in
-		// general -- is a legacy thing from workspaces mode that isn't
-		// carried forward to stacks, because stack configurations can instead
-		// vary their behavior based on input variables provided in the
-		// deployment configuration.
-		switch addr.Name {
-		case "workspace":
-			diags = diags.Append(&hcl.Diagnostic{
-				Severity: hcl.DiagError,
-				Summary:  `Invalid reference`,
-				Detail:   `The terraform.workspace attribute is only available for modules used in Terraform workspaces. Use input variables instead to create variations between different instances of this module.`,
-				Subject:  rng.ToHCL().Ptr(),
-			})
-		default:
-			// A more generic error for any other attribute name, since no
-			// others are valid anyway but it would be confusing to mention
-			// terraform.workspace here.
-			diags = diags.Append(&hcl.Diagnostic{
-				Severity: hcl.DiagError,
-				Summary:  `Invalid reference`,
-				Detail:   `The "terraform" object is only available for modules used in Terraform workspaces.`,
-				Subject:  rng.ToHCL().Ptr(),
-			})
-		}
-		return cty.DynamicVal, diags
-	}
-
-	switch addr.Name {
-
-	case "workspace":
-		workspaceName := d.Evaluator.Meta.Env
-		return cty.StringVal(workspaceName), diags
-
-	case "env":
-		// Prior to Terraform 0.12 there was an attribute "env", which was
-		// an alias name for "workspace". This was deprecated and is now
-		// removed.
-		diags = diags.Append(&hcl.Diagnostic{
-			Severity: hcl.DiagError,
-			Summary:  `Invalid "terraform" attribute`,
-			Detail:   `The terraform.env attribute was deprecated in v0.10 and removed in v0.12. The "state environment" concept was renamed to "workspace" in v0.12, and so the workspace name can now be accessed using the terraform.workspace attribute.`,
-			Subject:  rng.ToHCL().Ptr(),
-		})
-		return cty.DynamicVal, diags
-
-	default:
-		diags = diags.Append(&hcl.Diagnostic{
-			Severity: hcl.DiagError,
-			Summary:  `Invalid "terraform" attribute`,
-			Detail:   fmt.Sprintf(`The "terraform" object does not have an attribute named %q. The only supported attribute is terraform.workspace, the name of the currently-selected workspace.`, addr.Name),
-			Subject:  rng.ToHCL().Ptr(),
-		})
-		return cty.DynamicVal, diags
-	}
-}
-
 func (d *evaluationStateData) GetOutput(addr addrs.OutputValue, rng tfdiags.SourceRange) (cty.Value, tfdiags.Diagnostics) {
 	var diags tfdiags.Diagnostics
 
@@ -951,30 +822,6 @@ func (d *evaluationStateData) GetOutput(addr addrs.OutputValue, rng tfdiags.Sour
 	}
 
 	return val, diags
-}
-
-func (d *evaluationStateData) GetCheckBlock(addr addrs.Check, rng tfdiags.SourceRange) (cty.Value, tfdiags.Diagnostics) {
-	// For now, check blocks don't contain any meaningful data and can only
-	// be referenced from the testing scope within an expect_failures attribute.
-	//
-	// We've added them into the scope explicitly since they are referencable,
-	// but we'll actually just return an error message saying they can't be
-	// referenced in this context.
-	var diags tfdiags.Diagnostics
-	diags = diags.Append(&hcl.Diagnostic{
-		Severity: hcl.DiagError,
-		Summary:  "Reference to \"check\" in invalid context",
-		Detail:   "The \"check\" object can only be referenced from an \"expect_failures\" attribute within a Terraform testing \"run\" block.",
-		Subject:  rng.ToHCL().Ptr(),
-	})
-	return cty.NilVal, diags
-}
-
-func (d *evaluationStateData) GetRunBlock(run addrs.Run, rng tfdiags.SourceRange) (cty.Value, tfdiags.Diagnostics) {
-	// We should not get here because any scope that has an [evaluationStateData]
-	// as its Data should have a reference parser that doesn't accept addrs.Run
-	// addresses.
-	panic("GetRunBlock called on non-test evaluation dataset")
 }
 
 // moduleDisplayAddr returns a string describing the given module instance

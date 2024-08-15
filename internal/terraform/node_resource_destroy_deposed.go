@@ -9,8 +9,9 @@ import (
 
 	"github.com/hashicorp/terraform/internal/addrs"
 	"github.com/hashicorp/terraform/internal/dag"
-	"github.com/hashicorp/terraform/internal/lang"
+	"github.com/hashicorp/terraform/internal/instances"
 	"github.com/hashicorp/terraform/internal/plans"
+	"github.com/hashicorp/terraform/internal/providers"
 	"github.com/hashicorp/terraform/internal/states"
 	"github.com/hashicorp/terraform/internal/tfdiags"
 )
@@ -107,12 +108,26 @@ func (n *NodePlanDeposedResourceInstanceObject) Execute(ctx EvalContext, op walk
 		return diags
 	}
 
+	var forget bool
+	for _, ft := range n.forgetResources {
+		if ft.Equal(n.ResourceAddr()) {
+			forget = true
+		}
+	}
+	for _, fm := range n.forgetModules {
+		if fm.TargetContains(n.Addr) {
+			forget = true
+		}
+	}
+
 	// We don't refresh during the planDestroy walk, since that is only adding
 	// the destroy changes to the plan and the provider will not be configured
 	// at this point. The other nodes use separate types for plan and destroy,
 	// while deposed instances are always a destroy or forget operation, so the
 	// logic here is a bit overloaded.
-	if !n.skipRefresh && op != walkPlanDestroy {
+	//
+	// We also don't refresh when forgetting instances, as it is unnecessary.
+	if !n.skipRefresh && op != walkPlanDestroy && !forget {
 		// Refresh this object even though it may be destroyed, in
 		// case it's already been deleted outside of Terraform. If this is a
 		// normal plan, providers expect a Read request to remove missing
@@ -120,7 +135,7 @@ func (n *NodePlanDeposedResourceInstanceObject) Execute(ctx EvalContext, op walk
 		// resource during Delete correctly. If this is a simple refresh,
 		// Terraform is expected to remove the missing resource from the state
 		// entirely
-		refreshedState, refreshDiags := n.refresh(ctx, n.DeposedKey, state)
+		refreshedState, deferred, refreshDiags := n.refresh(ctx, n.DeposedKey, state, ctx.Deferrals().DeferralAllowed())
 		diags = diags.Append(refreshDiags)
 		if diags.HasErrors() {
 			return diags
@@ -133,30 +148,38 @@ func (n *NodePlanDeposedResourceInstanceObject) Execute(ctx EvalContext, op walk
 
 		// If we refreshed then our subsequent planning should be in terms of
 		// the new object, not the original object.
-		state = refreshedState
+		if deferred == nil {
+			state = refreshedState
+		} else {
+			ctx.Deferrals().ReportResourceInstanceDeferred(n.Addr, deferred.Reason, &plans.ResourceInstanceChange{
+				Addr: n.Addr,
+				Change: plans.Change{
+					Action: plans.Read,
+					Before: state.Value,
+					After:  refreshedState.Value,
+				},
+			})
+		}
 	}
 
 	if !n.skipPlanChanges {
-		var forget bool
-		for _, ft := range n.forgetResources {
-			if ft.Equal(n.ResourceAddr()) {
-				forget = true
-			}
-		}
-		for _, fm := range n.forgetModules {
-			if fm.TargetContains(n.Addr) {
-				forget = true
-			}
-		}
 		var change *plans.ResourceInstanceChange
 		var pDiags tfdiags.Diagnostics
+		var deferred *providers.Deferred
 		if forget {
 			change, pDiags = n.planForget(ctx, state, n.DeposedKey)
 		} else {
-			change, pDiags = n.planDestroy(ctx, state, n.DeposedKey)
+			change, deferred, pDiags = n.planDestroy(ctx, state, n.DeposedKey)
 		}
 		diags = diags.Append(pDiags)
 		if diags.HasErrors() {
+			return diags
+		}
+		if deferred != nil {
+			ctx.Deferrals().ReportResourceInstanceDeferred(n.Addr, deferred.Reason, &plans.ResourceInstanceChange{
+				Addr:   n.Addr,
+				Change: change.Change,
+			})
 			return diags
 		}
 
@@ -264,9 +287,17 @@ func (n *NodeDestroyDeposedResourceInstanceObject) Execute(ctx EvalContext, op w
 		return diags
 	}
 
-	change, destroyPlanDiags := n.planDestroy(ctx, state, n.DeposedKey)
+	change, deferred, destroyPlanDiags := n.planDestroy(ctx, state, n.DeposedKey)
 	diags = diags.Append(destroyPlanDiags)
 	if diags.HasErrors() {
+		return diags
+	}
+
+	if deferred != nil {
+		ctx.Deferrals().ReportResourceInstanceDeferred(n.Addr, deferred.Reason, &plans.ResourceInstanceChange{
+			Addr:   n.Addr,
+			Change: change.Change,
+		})
 		return diags
 	}
 
@@ -277,7 +308,7 @@ func (n *NodeDestroyDeposedResourceInstanceObject) Execute(ctx EvalContext, op w
 	}
 
 	// we pass a nil configuration to apply because we are destroying
-	state, applyDiags := n.apply(ctx, state, change, nil, lang.RepetitionData{}, false)
+	state, applyDiags := n.apply(ctx, state, change, nil, instances.RepetitionData{}, false)
 	diags = diags.Append(applyDiags)
 	// don't return immediately on errors, we need to handle the state
 

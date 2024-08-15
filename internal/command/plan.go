@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/hashicorp/terraform/internal/backend"
+	"github.com/hashicorp/terraform/internal/backend/backendrun"
 	"github.com/hashicorp/terraform/internal/command/arguments"
 	"github.com/hashicorp/terraform/internal/command/views"
 	"github.com/hashicorp/terraform/internal/tfdiags"
@@ -107,7 +107,7 @@ func (c *PlanCommand) Run(rawArgs []string) int {
 		return 1
 	}
 
-	if op.Result != backend.OperationSuccess {
+	if op.Result != backendrun.OperationSuccess {
 		return op.Result.ExitStatus()
 	}
 	if args.DetailedExitCode && !op.PlanEmpty {
@@ -117,7 +117,7 @@ func (c *PlanCommand) Run(rawArgs []string) int {
 	return op.Result.ExitStatus()
 }
 
-func (c *PlanCommand) PrepareBackend(args *arguments.State, viewType arguments.ViewType) (backend.Enhanced, tfdiags.Diagnostics) {
+func (c *PlanCommand) PrepareBackend(args *arguments.State, viewType arguments.ViewType) (backendrun.OperationsBackend, tfdiags.Diagnostics) {
 	// FIXME: we need to apply the state arguments to the meta object here
 	// because they are later used when initializing the backend. Carving a
 	// path to pass these arguments to the functions that need them is
@@ -143,13 +143,13 @@ func (c *PlanCommand) PrepareBackend(args *arguments.State, viewType arguments.V
 }
 
 func (c *PlanCommand) OperationRequest(
-	be backend.Enhanced,
+	be backendrun.OperationsBackend,
 	view views.Plan,
 	viewType arguments.ViewType,
 	args *arguments.Operation,
 	planOutPath string,
 	generateConfigOut string,
-) (*backend.Operation, tfdiags.Diagnostics) {
+) (*backendrun.Operation, tfdiags.Diagnostics) {
 	var diags tfdiags.Diagnostics
 
 	// Build the operation
@@ -162,8 +162,22 @@ func (c *PlanCommand) OperationRequest(
 	opReq.GenerateConfigOut = generateConfigOut
 	opReq.Targets = args.Targets
 	opReq.ForceReplace = args.ForceReplace
-	opReq.Type = backend.OperationTypePlan
+	opReq.Type = backendrun.OperationTypePlan
 	opReq.View = view.Operation()
+
+	// EXPERIMENTAL: maybe enable deferred actions
+	if c.AllowExperimentalFeatures {
+		opReq.DeferralAllowed = args.DeferralAllowed
+	} else if args.DeferralAllowed {
+		// Belated flag parse error, since we don't know about experiments
+		// support at actual parse time.
+		diags = diags.Append(tfdiags.Sourceless(
+			tfdiags.Error,
+			"Failed to parse command-line flags",
+			"The -allow-deferral flag is only valid in experimental builds of Terraform.",
+		))
+		return nil, diags
+	}
 
 	var err error
 	opReq.ConfigLoader, err = c.initConfigLoader()
@@ -175,7 +189,7 @@ func (c *PlanCommand) OperationRequest(
 	return opReq, diags
 }
 
-func (c *PlanCommand) GatherVariables(opReq *backend.Operation, args *arguments.Vars) tfdiags.Diagnostics {
+func (c *PlanCommand) GatherVariables(opReq *backendrun.Operation, args *arguments.Vars) tfdiags.Diagnostics {
 	var diags tfdiags.Diagnostics
 
 	// FIXME the arguments package currently trivially gathers variable related
@@ -186,12 +200,12 @@ func (c *PlanCommand) GatherVariables(opReq *backend.Operation, args *arguments.
 	// package directly, removing this shim layer.
 
 	varArgs := args.All()
-	items := make([]rawFlag, len(varArgs))
+	items := make([]arguments.FlagNameValue, len(varArgs))
 	for i := range varArgs {
 		items[i].Name = varArgs[i].Name
 		items[i].Value = varArgs[i].Value
 	}
-	c.Meta.variableArgs = rawFlags{items: &items}
+	c.Meta.variableArgs = arguments.FlagNameValueSlice{Items: &items}
 	opReq.Variables, diags = c.collectVariableValues()
 
 	return diags

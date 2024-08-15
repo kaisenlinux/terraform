@@ -42,12 +42,12 @@ Usage: terraform [global options] test [options]
 
 Options:
 
-  -cloud-run=source     If specified, Terraform will execute this test run
-                        remotely using HCP Terraform or Terraform Enterpise.
-						You must specify the source of a module registered in
-						a private module registry as the argument to this flag.
-						This allows Terraform to associate the cloud run with
-						the correct HCP Terraform or Terraform Enterprise module
+  -cloud-run=source     If specified, Terraform will execute this test run 
+                        remotely using HCP Terraform or Terraform Enterpise. 
+						You must specify the source of a module registered in 
+						a private module registry as the argument to this flag. 
+						This allows Terraform to associate the cloud run with 
+						the correct HCP Terraform or Terraform Enterprise module 
 						and organization.
 
   -filter=testfile      If specified, Terraform will only execute the test files
@@ -148,14 +148,14 @@ func (c *TestCommand) Run(rawArgs []string) int {
 
 	// Users can also specify variables via the command line, so we'll parse
 	// all that here.
-	var items []rawFlag
+	var items []arguments.FlagNameValue
 	for _, variable := range args.Vars.All() {
-		items = append(items, rawFlag{
+		items = append(items, arguments.FlagNameValue{
 			Name:  variable.Name,
 			Value: variable.Value,
 		})
 	}
-	c.variableArgs = rawFlags{items: &items}
+	c.variableArgs = arguments.FlagNameValueSlice{Items: &items}
 
 	// Collect variables for "terraform test"
 	testVariables, variableDiags := c.collectVariableValuesForTests(args.TestDirectory)

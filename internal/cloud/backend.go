@@ -25,6 +25,7 @@ import (
 	"github.com/zclconf/go-cty/cty/gocty"
 
 	"github.com/hashicorp/terraform/internal/backend"
+	"github.com/hashicorp/terraform/internal/backend/backendrun"
 	"github.com/hashicorp/terraform/internal/command/jsonformat"
 	"github.com/hashicorp/terraform/internal/command/views"
 	"github.com/hashicorp/terraform/internal/configs/configschema"
@@ -95,8 +96,8 @@ type Cloud struct {
 	// renderer is used for rendering JSON plan output and streamed logs.
 	renderer *jsonformat.Renderer
 
-	// local allows local operations, where Terraform Cloud serves as a state storage backend.
-	local backend.Enhanced
+	// local allows local operations, where HCP Terraform serves as a state storage backend.
+	local backendrun.OperationsBackend
 
 	// forceLocal, if true, will force the use of the local backend.
 	forceLocal bool
@@ -118,8 +119,8 @@ type Cloud struct {
 }
 
 var _ backend.Backend = (*Cloud)(nil)
-var _ backend.Enhanced = (*Cloud)(nil)
-var _ backend.Local = (*Cloud)(nil)
+var _ backendrun.OperationsBackend = (*Cloud)(nil)
+var _ backendrun.Local = (*Cloud)(nil)
 
 // New creates a new initialized cloud backend.
 func New(services *disco.Disco) *Cloud {
@@ -202,7 +203,7 @@ func (b *Cloud) PrepareConfig(obj cty.Value) (cty.Value, tfdiags.Diagnostics) {
 	return obj, diags
 }
 
-func (b *Cloud) ServiceDiscoveryAliases() ([]backend.HostAlias, error) {
+func (b *Cloud) ServiceDiscoveryAliases() ([]backendrun.HostAlias, error) {
 	aliasHostname, err := svchost.ForComparison(genericHostname)
 	if err != nil {
 		// This should never happen because the hostname is statically defined.
@@ -216,7 +217,7 @@ func (b *Cloud) ServiceDiscoveryAliases() ([]backend.HostAlias, error) {
 		return nil, fmt.Errorf("failed to create backend alias to target %q. The hostname is not in the correct format.", b.Hostname)
 	}
 
-	return []backend.HostAlias{
+	return []backendrun.HostAlias{
 		{
 			From: aliasHostname,
 			To:   targetHostname,
@@ -805,8 +806,8 @@ func (b *Cloud) StateMgr(name string) (statemgr.Full, error) {
 	return &State{tfeClient: b.client, organization: b.Organization, workspace: workspace, enableIntermediateSnapshots: false}, nil
 }
 
-// Operation implements backend.Enhanced.
-func (b *Cloud) Operation(ctx context.Context, op *backend.Operation) (*backend.RunningOperation, error) {
+// Operation implements backendrun.OperationsBackend.
+func (b *Cloud) Operation(ctx context.Context, op *backendrun.Operation) (*backendrun.RunningOperation, error) {
 	// Retrieve the workspace for this operation.
 	w, err := b.fetchWorkspace(ctx, b.Organization, op.Workspace)
 	if err != nil {
@@ -835,13 +836,13 @@ func (b *Cloud) Operation(ctx context.Context, op *backend.Operation) (*backend.
 	op.Workspace = w.Name
 
 	// Determine the function to call for our operation
-	var f func(context.Context, context.Context, *backend.Operation, *tfe.Workspace) (*tfe.Run, error)
+	var f func(context.Context, context.Context, *backendrun.Operation, *tfe.Workspace) (*tfe.Run, error)
 	switch op.Type {
-	case backend.OperationTypePlan:
+	case backendrun.OperationTypePlan:
 		f = b.opPlan
-	case backend.OperationTypeApply:
+	case backendrun.OperationTypeApply:
 		f = b.opApply
-	case backend.OperationTypeRefresh:
+	case backendrun.OperationTypeRefresh:
 		// The `terraform refresh` command has been deprecated in favor of `terraform apply -refresh-state`.
 		// Rather than respond with an error telling the user to run the other command we can just run
 		// that command instead. We will tell the user what we are doing, and then do it.
@@ -863,7 +864,7 @@ func (b *Cloud) Operation(ctx context.Context, op *backend.Operation) (*backend.
 	// Build our running operation
 	// the runninCtx is only used to block until the operation returns.
 	runningCtx, done := context.WithCancel(context.Background())
-	runningOp := &backend.RunningOperation{
+	runningOp := &backendrun.RunningOperation{
 		Context:   runningCtx,
 		PlanEmpty: true,
 	}
@@ -894,7 +895,7 @@ func (b *Cloud) Operation(ctx context.Context, op *backend.Operation) (*backend.
 		}
 
 		if r == nil && opErr == context.Canceled {
-			runningOp.Result = backend.OperationFailure
+			runningOp.Result = backendrun.OperationFailure
 			return
 		}
 
@@ -921,7 +922,7 @@ func (b *Cloud) Operation(ctx context.Context, op *backend.Operation) (*backend.
 			}
 
 			if r.Status == tfe.RunCanceled || r.Status == tfe.RunErrored {
-				runningOp.Result = backend.OperationFailure
+				runningOp.Result = backendrun.OperationFailure
 			}
 		}
 	}()
@@ -930,7 +931,7 @@ func (b *Cloud) Operation(ctx context.Context, op *backend.Operation) (*backend.
 	return runningOp, nil
 }
 
-func (b *Cloud) cancel(cancelCtx context.Context, op *backend.Operation, r *tfe.Run) error {
+func (b *Cloud) cancel(cancelCtx context.Context, op *backendrun.Operation, r *tfe.Run) error {
 	if r.Actions.IsCancelable {
 		// Only ask if the remote operation should be canceled
 		// if the auto approve flag is not set.

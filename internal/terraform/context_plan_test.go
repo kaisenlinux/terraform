@@ -5605,19 +5605,16 @@ func TestContext2Plan_variableSensitivity(t *testing.T) {
 			checkVals(t, objectVal(t, schema, map[string]cty.Value{
 				"foo": cty.StringVal("foo").Mark(marks.Sensitive),
 			}), ric.After)
-			if len(res.ChangeSrc.BeforeValMarks) != 0 {
-				t.Errorf("unexpected BeforeValMarks: %#v", res.ChangeSrc.BeforeValMarks)
+			if len(res.ChangeSrc.BeforeSensitivePaths) != 0 {
+				t.Errorf("unexpected BeforeSensitivePaths: %#v", res.ChangeSrc.BeforeSensitivePaths)
 			}
-			if len(res.ChangeSrc.AfterValMarks) != 1 {
-				t.Errorf("unexpected AfterValMarks: %#v", res.ChangeSrc.AfterValMarks)
+			if len(res.ChangeSrc.AfterSensitivePaths) != 1 {
+				t.Errorf("unexpected AfterSensitivePaths: %#v", res.ChangeSrc.AfterSensitivePaths)
 				continue
 			}
-			pvm := res.ChangeSrc.AfterValMarks[0]
-			if got, want := pvm.Path, cty.GetAttrPath("foo"); !got.Equals(want) {
+			sensitivePath := res.ChangeSrc.AfterSensitivePaths[0]
+			if got, want := sensitivePath, cty.GetAttrPath("foo"); !got.Equals(want) {
 				t.Errorf("unexpected path for mark\n got: %#v\nwant: %#v", got, want)
-			}
-			if got, want := pvm.Marks, cty.NewValueMarks(marks.Sensitive); !got.Equal(want) {
-				t.Errorf("unexpected value for mark\n got: %#v\nwant: %#v", got, want)
 			}
 		default:
 			t.Fatal("unknown instance:", i)
@@ -5675,29 +5672,27 @@ func TestContext2Plan_variableSensitivityModule(t *testing.T) {
 				"foo":   cty.StringVal("foo").Mark(marks.Sensitive),
 				"value": cty.StringVal("boop").Mark(marks.Sensitive),
 			}), ric.After)
-			if len(res.ChangeSrc.BeforeValMarks) != 0 {
-				t.Errorf("unexpected BeforeValMarks: %#v", res.ChangeSrc.BeforeValMarks)
+			if len(res.ChangeSrc.BeforeSensitivePaths) != 0 {
+				t.Errorf("unexpected BeforeSensitivePaths: %#v", res.ChangeSrc.BeforeSensitivePaths)
 			}
-			if len(res.ChangeSrc.AfterValMarks) != 2 {
-				t.Errorf("expected AfterValMarks to contain two elements: %#v", res.ChangeSrc.AfterValMarks)
+			if len(res.ChangeSrc.AfterSensitivePaths) != 2 {
+				t.Errorf("expected AfterSensitivePaths to contain two elements: %#v", res.ChangeSrc.AfterSensitivePaths)
 				continue
 			}
 			// validate that the after marks have "foo" and "value"
-			contains := func(pvmSlice []cty.PathValueMarks, stepName string) bool {
-				for _, pvm := range pvmSlice {
-					if pvm.Path.Equals(cty.GetAttrPath(stepName)) {
-						if pvm.Marks.Equal(cty.NewValueMarks(marks.Sensitive)) {
-							return true
-						}
+			contains := func(paths []cty.Path, stepName string) bool {
+				for _, path := range paths {
+					if path.Equals(cty.GetAttrPath(stepName)) {
+						return true
 					}
 				}
 				return false
 			}
-			if !contains(res.ChangeSrc.AfterValMarks, "foo") {
-				t.Error("unexpected AfterValMarks to contain \"foo\" with sensitive mark")
+			if !contains(res.ChangeSrc.AfterSensitivePaths, "foo") {
+				t.Error("unexpected AfterSensitivePaths to contain \"foo\" with sensitive mark")
 			}
-			if !contains(res.ChangeSrc.AfterValMarks, "value") {
-				t.Error("unexpected AfterValMarks to contain \"value\" with sensitive mark")
+			if !contains(res.ChangeSrc.AfterSensitivePaths, "value") {
+				t.Error("unexpected AfterSensitivePaths to contain \"value\" with sensitive mark")
 			}
 		default:
 			t.Fatal("unknown instance:", i)
@@ -6902,9 +6897,9 @@ resource "test_resource" "foo" {
 			&states.ResourceInstanceObjectSrc{
 				Status:    states.ObjectReady,
 				AttrsJSON: []byte(`{"id":"foo", "value":"hello", "sensitive_value":"hello"}`),
-				AttrSensitivePaths: []cty.PathValueMarks{
-					{Path: cty.Path{cty.GetAttrStep{Name: "value"}}, Marks: cty.NewValueMarks(marks.Sensitive)},
-					{Path: cty.Path{cty.GetAttrStep{Name: "sensitive_value"}}, Marks: cty.NewValueMarks(marks.Sensitive)},
+				AttrSensitivePaths: []cty.Path{
+					cty.GetAttrPath("value"),
+					cty.GetAttrPath("sensitive_value"),
 				},
 			},
 			addrs.AbsProviderConfig{
@@ -6922,6 +6917,120 @@ resource "test_resource" "foo" {
 		if c.Action != plans.NoOp {
 			t.Fatalf("expected no changes, got %s for %q", c.Action, c.Addr)
 		}
+	}
+}
+
+func TestContext2Plan_variableCustomValidationsSimple(t *testing.T) {
+	m := testModuleInline(t, map[string]string{
+		"main.tf": `
+			variable "a" {
+				type = string
+
+				validation {
+					condition     = var.a == "beep"
+					error_message = "Value must be beep."
+				}
+			}
+		`,
+	})
+
+	p := testProvider("test")
+	ctx := testContext2(t, &ContextOpts{
+		Providers: map[addrs.Provider]providers.Factory{
+			addrs.NewDefaultProvider("test"): testProviderFuncFixed(p),
+		},
+	})
+
+	// Should be successful if we comply with the validation rules...
+	_, diags := ctx.Plan(m, states.NewState(), &PlanOpts{
+		SetVariables: map[string]*InputValue{
+			"a": {
+				Value: cty.StringVal("beep"),
+			},
+		},
+	})
+	if diags.HasErrors() {
+		t.Fatalf("unexpected error\ngot: %s", diags.Err().Error())
+	}
+
+	// ...but should get an error if we violate the rule.
+	_, diags = ctx.Plan(m, states.NewState(), &PlanOpts{
+		SetVariables: map[string]*InputValue{
+			"a": {
+				Value: cty.StringVal("not beep"),
+			},
+		},
+	})
+	if !diags.HasErrors() {
+		t.Fatalf("unexpected success")
+	}
+	gotDiags := diags.Err().Error()
+	wantDiagSubstr := "Value must be beep."
+	if !strings.Contains(gotDiags, wantDiagSubstr) {
+		t.Errorf("missing expected error message\nwant substring: %s\ngot:\n%s", gotDiags, wantDiagSubstr)
+	}
+}
+
+func TestContext2Plan_variableCustomValidationsCrossRef(t *testing.T) {
+	// This test is dealing with validation rules that refer to other objects
+	// in the same module.
+	m := testModuleInline(t, map[string]string{
+		"main.tf": `
+			variable "a" {
+				type = string
+			}
+
+			variable "b" {
+				type = string
+
+				validation {
+					condition     = var.a == var.b
+					error_message = "Value must match the value of var.a."
+				}
+			}
+		`,
+	})
+
+	p := testProvider("test")
+	ctx := testContext2(t, &ContextOpts{
+		Providers: map[addrs.Provider]providers.Factory{
+			addrs.NewDefaultProvider("test"): testProviderFuncFixed(p),
+		},
+	})
+
+	// Should be successful if we comply with the validation rules...
+	_, diags := ctx.Plan(m, states.NewState(), &PlanOpts{
+		SetVariables: map[string]*InputValue{
+			"a": {
+				Value: cty.StringVal("beep"),
+			},
+			"b": {
+				Value: cty.StringVal("beep"),
+			},
+		},
+	})
+	if diags.HasErrors() {
+		t.Fatalf("unexpected error\ngot: %s", diags.Err().Error())
+	}
+
+	// ...but should get an error if we violate the rule.
+	_, diags = ctx.Plan(m, states.NewState(), &PlanOpts{
+		SetVariables: map[string]*InputValue{
+			"a": {
+				Value: cty.StringVal("beep"),
+			},
+			"b": {
+				Value: cty.StringVal("not beep"),
+			},
+		},
+	})
+	if !diags.HasErrors() {
+		t.Fatalf("unexpected success")
+	}
+	gotDiags := diags.Err().Error()
+	wantDiagSubstr := "Value must match the value of var.a."
+	if !strings.Contains(gotDiags, wantDiagSubstr) {
+		t.Errorf("missing expected error message\nwant substring: %s\ngot:\n%s", gotDiags, wantDiagSubstr)
 	}
 }
 

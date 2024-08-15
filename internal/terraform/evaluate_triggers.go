@@ -8,14 +8,13 @@ import (
 
 	"github.com/hashicorp/hcl/v2"
 	"github.com/hashicorp/hcl/v2/hclsyntax"
-	"github.com/zclconf/go-cty/cty"
-
 	"github.com/hashicorp/terraform/internal/addrs"
-	"github.com/hashicorp/terraform/internal/lang"
+	"github.com/hashicorp/terraform/internal/instances"
 	"github.com/hashicorp/terraform/internal/tfdiags"
+	"github.com/zclconf/go-cty/cty"
 )
 
-func evalReplaceTriggeredByExpr(expr hcl.Expression, keyData lang.RepetitionData) (*addrs.Reference, tfdiags.Diagnostics) {
+func evalReplaceTriggeredByExpr(expr hcl.Expression, keyData instances.RepetitionData) (*addrs.Reference, tfdiags.Diagnostics) {
 	var ref *addrs.Reference
 	var diags tfdiags.Diagnostics
 
@@ -35,7 +34,7 @@ func evalReplaceTriggeredByExpr(expr hcl.Expression, keyData lang.RepetitionData
 // in replace_triggered_by, and converts it to a static traversal. The
 // RepetitionData contains the data necessary to evaluate the only allowed
 // variables in the expression, count.index and each.key.
-func triggersExprToTraversal(expr hcl.Expression, keyData lang.RepetitionData) (hcl.Traversal, tfdiags.Diagnostics) {
+func triggersExprToTraversal(expr hcl.Expression, keyData instances.RepetitionData) (hcl.Traversal, tfdiags.Diagnostics) {
 	var trav hcl.Traversal
 	var diags tfdiags.Diagnostics
 
@@ -83,7 +82,7 @@ func triggersExprToTraversal(expr hcl.Expression, keyData lang.RepetitionData) (
 
 // parseReplaceTriggeredByKeyExpr takes an hcl.Expression and parses it as an index key, while
 // evaluating any references to count.index or each.key.
-func parseReplaceTriggeredByKeyExpr(expr hcl.Expression, keyData lang.RepetitionData) (hcl.TraverseIndex, hcl.Diagnostics) {
+func parseReplaceTriggeredByKeyExpr(expr hcl.Expression, keyData instances.RepetitionData) (hcl.TraverseIndex, hcl.Diagnostics) {
 	idx := hcl.TraverseIndex{
 		SrcRange: expr.Range(),
 	}

@@ -5,11 +5,12 @@ package cloud
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
-	"github.com/hashicorp/go-multierror"
 	tfe "github.com/hashicorp/go-tfe"
+
 	"github.com/hashicorp/terraform/internal/terraform"
 )
 
@@ -70,7 +71,7 @@ func (b *Cloud) getTaskStageWithAllOptions(ctx *IntegrationContext, stageID stri
 }
 
 func (b *Cloud) runTaskStage(ctx *IntegrationContext, output IntegrationOutputWriter, stageID string) error {
-	var errs *multierror.Error
+	var errs error
 
 	// Create our summarizers
 	summarizers := make([]taskStageSummarizer, 0)
@@ -113,6 +114,9 @@ func (b *Cloud) runTaskStage(ctx *IntegrationContext, output IntegrationOutputWr
 				errs = e
 			}
 			if ok {
+				if b.CLI != nil {
+					b.CLI.Output("------------------------------------------------------------------------")
+				}
 				return true, nil
 			}
 		case tfe.TaskStageCanceled, tfe.TaskStageErrored, tfe.TaskStageFailed:
@@ -121,6 +125,9 @@ func (b *Cloud) runTaskStage(ctx *IntegrationContext, output IntegrationOutputWr
 				errs = e
 			}
 			if ok {
+				if b.CLI != nil {
+					b.CLI.Output("------------------------------------------------------------------------")
+				}
 				return true, nil
 			}
 			return false, fmt.Errorf("Task Stage %s.", stage.Status)
@@ -134,8 +141,11 @@ func (b *Cloud) runTaskStage(ctx *IntegrationContext, output IntegrationOutputWr
 			}
 			cont, err := b.processStageOverrides(ctx, output, stage.ID)
 			if err != nil {
-				errs = multierror.Append(errs, err)
+				errs = errors.Join(errs, err)
 			} else {
+				if b.CLI != nil {
+					b.CLI.Output("------------------------------------------------------------------------")
+				}
 				return cont, nil
 			}
 		case tfe.TaskStageUnreachable:
@@ -143,15 +153,15 @@ func (b *Cloud) runTaskStage(ctx *IntegrationContext, output IntegrationOutputWr
 		default:
 			return false, fmt.Errorf("Invalid Task stage status: %s ", stage.Status)
 		}
-		return false, errs.ErrorOrNil()
+		return false, errs
 	})
 }
 
-func processSummarizers(ctx *IntegrationContext, output IntegrationOutputWriter, stage *tfe.TaskStage, summarizers []taskStageSummarizer, errs *multierror.Error) (bool, *multierror.Error) {
+func processSummarizers(ctx *IntegrationContext, output IntegrationOutputWriter, stage *tfe.TaskStage, summarizers []taskStageSummarizer, errs error) (bool, error) {
 	for _, s := range summarizers {
 		cont, msg, err := s.Summarize(ctx, output, stage)
 		if err != nil {
-			errs = multierror.Append(errs, err)
+			errs = errors.Join(errs, err)
 			break
 		}
 
@@ -169,9 +179,13 @@ func processSummarizers(ctx *IntegrationContext, output IntegrationOutputWriter,
 }
 
 func (b *Cloud) processStageOverrides(context *IntegrationContext, output IntegrationOutputWriter, taskStageID string) (bool, error) {
+	if b.CLI != nil {
+		b.CLI.Output("--------------------------------\n")
+		b.CLI.Output(b.Colorize().Color(fmt.Sprintf("%c%c [bold]Override", Arrow, Arrow)))
+	}
 	opts := &terraform.InputOpts{
 		Id:          fmt.Sprintf("%c%c [bold]Override", Arrow, Arrow),
-		Query:       "\nDo you want to override the failed policy check?",
+		Query:       "\nDo you want to override the failed policies?",
 		Description: "Only 'override' will be accepted to override.",
 	}
 	runURL := fmt.Sprintf(taskStageHeader, b.Hostname, b.Organization, context.Op.Workspace, context.Run.ID)

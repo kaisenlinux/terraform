@@ -10,7 +10,8 @@ import (
 	"github.com/zclconf/go-cty/cty"
 
 	"github.com/hashicorp/terraform/internal/addrs"
-	"github.com/hashicorp/terraform/internal/lang"
+	"github.com/hashicorp/terraform/internal/instances"
+	"github.com/hashicorp/terraform/internal/lang/langrefs"
 	"github.com/hashicorp/terraform/internal/lang/marks"
 	"github.com/hashicorp/terraform/internal/tfdiags"
 )
@@ -100,8 +101,8 @@ func (ev *forEachEvaluator) ResourceValue() (map[string]cty.Value, bool, tfdiags
 
 // ImportValue returns the for_each map for use within an import block,
 // enumerated as individual instances.RepetitionData values.
-func (ev *forEachEvaluator) ImportValues() ([]lang.RepetitionData, tfdiags.Diagnostics) {
-	var res []lang.RepetitionData
+func (ev *forEachEvaluator) ImportValues() ([]instances.RepetitionData, tfdiags.Diagnostics) {
+	var res []instances.RepetitionData
 	if ev.expr == nil {
 		return res, nil
 	}
@@ -126,7 +127,7 @@ func (ev *forEachEvaluator) ImportValues() ([]lang.RepetitionData, tfdiags.Diagn
 	it := val.ElementIterator()
 	for it.Next() {
 		k, v := it.Element()
-		res = append(res, lang.RepetitionData{
+		res = append(res, instances.RepetitionData{
 			EachKey:   k,
 			EachValue: v.WithMarks(marks),
 		})
@@ -145,7 +146,7 @@ func (ev *forEachEvaluator) Value() (cty.Value, tfdiags.Diagnostics) {
 		return cty.NullVal(cty.Map(cty.DynamicPseudoType)), nil
 	}
 
-	refs, moreDiags := lang.ReferencesInExpr(addrs.ParseRef, ev.expr)
+	refs, moreDiags := langrefs.ReferencesInExpr(addrs.ParseRef, ev.expr)
 	diags = diags.Append(moreDiags)
 	scope := ev.ctx.EvaluationScope(nil, nil, EvalDataForNoInstanceKey)
 	if scope != nil {

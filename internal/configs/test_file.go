@@ -11,7 +11,7 @@ import (
 	"github.com/hashicorp/hcl/v2/hclsyntax"
 
 	"github.com/hashicorp/terraform/internal/addrs"
-	"github.com/hashicorp/terraform/internal/getmodules"
+	"github.com/hashicorp/terraform/internal/getmodules/moduleaddrs"
 	"github.com/hashicorp/terraform/internal/tfdiags"
 )
 
@@ -337,7 +337,7 @@ func loadTestFile(body hcl.Body) (*TestFile, hcl.Diagnostics) {
 				tf.Variables[v.Name] = v.Expr
 			}
 		case "provider":
-			provider, providerDiags := decodeProviderBlock(block)
+			provider, providerDiags := decodeProviderBlock(block, true)
 			diags = append(diags, providerDiags...)
 			if provider != nil {
 				key := provider.moduleUniqueKey()
@@ -636,9 +636,9 @@ func decodeTestRunModuleBlock(block *hcl.Block) (*TestRunModuleCall, hcl.Diagnos
 		if !rawDiags.HasErrors() {
 			var err error
 			if haveVersionArg {
-				module.Source, err = addrs.ParseModuleSourceRegistry(raw)
+				module.Source, err = moduleaddrs.ParseModuleSourceRegistry(raw)
 			} else {
-				module.Source, err = addrs.ParseModuleSource(raw)
+				module.Source, err = moduleaddrs.ParseModuleSource(raw)
 			}
 			if err != nil {
 				// NOTE: We leave mc.SourceAddr as nil for any situation where the
@@ -655,7 +655,7 @@ func decodeTestRunModuleBlock(block *hcl.Block) (*TestRunModuleCall, hcl.Diagnos
 				// though, mostly related to remote package sub-paths and local
 				// paths.
 				switch err := err.(type) {
-				case *getmodules.MaybeRelativePathErr:
+				case *moduleaddrs.MaybeRelativePathErr:
 					diags = append(diags, &hcl.Diagnostic{
 						Severity: hcl.DiagError,
 						Summary:  "Invalid module source address",

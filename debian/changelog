@@ -1,3 +1,13 @@
+terraform (1.9.4-1kaisen) kaisen-packages; urgency=medium
+
+  * Import the 1.9.4 release
+  * Bump the Standards-Version
+  * Bump the golang-go version required to build
+  * Remove the i386 arch
+  * Add terragrunt as Suggests
+
+ -- Kevin Chevreuil - Kaisen <kaisen@kaisenlinux.org>  Thu, 15 Aug 2024 14:42:09 +0200
+
 terraform (1.8.3-1kaisen) kaisen-packages; urgency=medium
 
   * Import the 1.8.3 release

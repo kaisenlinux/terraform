@@ -10,7 +10,6 @@ import (
 	"github.com/hashicorp/terraform/internal/addrs"
 	"github.com/hashicorp/terraform/internal/checks"
 	"github.com/hashicorp/terraform/internal/configs"
-	"github.com/hashicorp/terraform/internal/experiments"
 	"github.com/hashicorp/terraform/internal/instances"
 	"github.com/hashicorp/terraform/internal/moduletest/mocking"
 	"github.com/hashicorp/terraform/internal/namedvals"
@@ -44,6 +43,9 @@ type graphWalkOpts struct {
 	// strange things to happen, because our graph walking machinery doesn't
 	// always take into account what walk type it's dealing with.
 	ExternalProviderConfigs map[addrs.RootProviderConfig]providers.Interface
+
+	// DeferralAlowed indicates that the current runtime supports deferred actions.
+	DeferralAllowed bool
 
 	// ExternalDependencyDeferred indicates that something that this entire
 	// configuration depends on (outside the view of this modules runtime)
@@ -166,24 +168,9 @@ func (c *Context) graphWalker(graph *Graph, operation walkOperation, opts *graph
 		}
 	}
 
-	deferralsAllowed := false
-	opts.Config.DeepEach(func(c *configs.Config) {
-		if c.Module != nil && c.Module.ActiveExperiments.Has(experiments.UnknownInstances) {
-			deferralsAllowed = true
-		}
-	})
-
-	var deferred *deferring.Deferred
-	if deferralsAllowed {
-		// We'll produce a derived graph that only includes the static resource
-		// blocks, since we need that for deferral tracking.
-		resourceGraph := graph.ResourceGraph()
-		deferred = deferring.NewDeferred(resourceGraph)
-		if opts.ExternalDependencyDeferred {
-			deferred.SetExternalDependencyDeferred()
-		}
-	} else {
-		deferred = deferring.NewDeferred(addrs.NewDirectedGraph[addrs.ConfigResource]())
+	deferred := deferring.NewDeferred(opts.DeferralAllowed)
+	if opts.ExternalDependencyDeferred {
+		deferred.SetExternalDependencyDeferred()
 	}
 
 	return &ContextGraphWalker{

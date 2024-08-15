@@ -14,7 +14,9 @@ import (
 	"github.com/hashicorp/terraform/internal/addrs"
 	"github.com/hashicorp/terraform/internal/checks"
 	"github.com/hashicorp/terraform/internal/configs"
+	"github.com/hashicorp/terraform/internal/instances"
 	"github.com/hashicorp/terraform/internal/lang"
+	"github.com/hashicorp/terraform/internal/lang/langrefs"
 	"github.com/hashicorp/terraform/internal/tfdiags"
 )
 
@@ -27,7 +29,7 @@ import (
 //
 // If any of the rules do not pass, the returned diagnostics will contain
 // errors. Otherwise, it will either be empty or contain only warnings.
-func evalCheckRules(typ addrs.CheckRuleType, rules []*configs.CheckRule, ctx EvalContext, self addrs.Checkable, keyData lang.RepetitionData, diagSeverity tfdiags.Severity) tfdiags.Diagnostics {
+func evalCheckRules(typ addrs.CheckRuleType, rules []*configs.CheckRule, ctx EvalContext, self addrs.Checkable, keyData instances.RepetitionData, diagSeverity tfdiags.Severity) tfdiags.Diagnostics {
 	var diags tfdiags.Diagnostics
 
 	checkState := ctx.Checks()
@@ -67,12 +69,12 @@ type checkResult struct {
 	FailureMessage string
 }
 
-func validateCheckRule(addr addrs.CheckRule, rule *configs.CheckRule, ctx EvalContext, keyData lang.RepetitionData) (string, *hcl.EvalContext, tfdiags.Diagnostics) {
+func validateCheckRule(addr addrs.CheckRule, rule *configs.CheckRule, ctx EvalContext, keyData instances.RepetitionData) (string, *hcl.EvalContext, tfdiags.Diagnostics) {
 	var diags tfdiags.Diagnostics
 
-	refs, moreDiags := lang.ReferencesInExpr(addrs.ParseRef, rule.Condition)
+	refs, moreDiags := langrefs.ReferencesInExpr(addrs.ParseRef, rule.Condition)
 	diags = diags.Append(moreDiags)
-	moreRefs, moreDiags := lang.ReferencesInExpr(addrs.ParseRef, rule.ErrorMessage)
+	moreRefs, moreDiags := langrefs.ReferencesInExpr(addrs.ParseRef, rule.ErrorMessage)
 	diags = diags.Append(moreDiags)
 	refs = append(refs, moreRefs...)
 
@@ -107,7 +109,7 @@ func validateCheckRule(addr addrs.CheckRule, rule *configs.CheckRule, ctx EvalCo
 	return errorMessage, hclCtx, diags
 }
 
-func evalCheckRule(addr addrs.CheckRule, rule *configs.CheckRule, ctx EvalContext, keyData lang.RepetitionData, severity hcl.DiagnosticSeverity) (checkResult, tfdiags.Diagnostics) {
+func evalCheckRule(addr addrs.CheckRule, rule *configs.CheckRule, ctx EvalContext, keyData instances.RepetitionData, severity hcl.DiagnosticSeverity) (checkResult, tfdiags.Diagnostics) {
 	// NOTE: Intentionally not passing the caller's selected severity in here,
 	// because this reports errors in the configuration itself, not the failure
 	// of an otherwise-valid condition.

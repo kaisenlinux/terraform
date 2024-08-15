@@ -6,7 +6,6 @@ package planfile
 import (
 	"fmt"
 	"io"
-	"io/ioutil"
 	"time"
 
 	"github.com/zclconf/go-cty/cty"
@@ -15,7 +14,6 @@ import (
 	"github.com/hashicorp/terraform/internal/addrs"
 	"github.com/hashicorp/terraform/internal/checks"
 	"github.com/hashicorp/terraform/internal/lang/globalref"
-	"github.com/hashicorp/terraform/internal/lang/marks"
 	"github.com/hashicorp/terraform/internal/plans"
 	"github.com/hashicorp/terraform/internal/plans/planproto"
 	"github.com/hashicorp/terraform/internal/providers"
@@ -38,7 +36,7 @@ const tfplanFilename = "tfplan"
 // a plan file, which is stored in a special file in the archive called
 // "tfplan".
 func readTfplan(r io.Reader) (*plans.Plan, error) {
-	src, err := ioutil.ReadAll(r)
+	src, err := io.ReadAll(r)
 	if err != nil {
 		return nil, err
 	}
@@ -63,8 +61,9 @@ func readTfplan(r io.Reader) (*plans.Plan, error) {
 			Outputs:   []*plans.OutputChangeSrc{},
 			Resources: []*plans.ResourceInstanceChangeSrc{},
 		},
-		DriftedResources: []*plans.ResourceInstanceChangeSrc{},
-		Checks:           &states.CheckResults{},
+		DriftedResources:  []*plans.ResourceInstanceChangeSrc{},
+		DeferredResources: []*plans.DeferredResourceInstanceChangeSrc{},
+		Checks:            &states.CheckResults{},
 	}
 
 	plan.Applyable = rawPlan.Applyable
@@ -123,6 +122,15 @@ func readTfplan(r io.Reader) (*plans.Plan, error) {
 		}
 
 		plan.DriftedResources = append(plan.DriftedResources, change)
+	}
+
+	for _, rawDC := range rawPlan.DeferredChanges {
+		change, err := deferredChangeFromTfplan(rawDC)
+		if err != nil {
+			return nil, err
+		}
+
+		plan.DeferredResources = append(plan.DeferredResources, change)
 	}
 
 	for _, rawRA := range rawPlan.RelevantAttributes {
@@ -406,20 +414,19 @@ func changeFromTfplan(rawChange *planproto.Change) (*plans.ChangeSrc, error) {
 	}
 	ret.GeneratedConfig = rawChange.GeneratedConfig
 
-	sensitive := cty.NewValueMarks(marks.Sensitive)
-	beforeValMarks, err := pathValueMarksFromTfplan(rawChange.BeforeSensitivePaths, sensitive)
+	beforeValSensitiveAttrs, err := pathsFromTfplan(rawChange.BeforeSensitivePaths)
 	if err != nil {
 		return nil, fmt.Errorf("failed to decode before sensitive paths: %s", err)
 	}
-	afterValMarks, err := pathValueMarksFromTfplan(rawChange.AfterSensitivePaths, sensitive)
+	afterValSensitiveAttrs, err := pathsFromTfplan(rawChange.AfterSensitivePaths)
 	if err != nil {
 		return nil, fmt.Errorf("failed to decode after sensitive paths: %s", err)
 	}
-	if len(beforeValMarks) > 0 {
-		ret.BeforeValMarks = beforeValMarks
+	if len(beforeValSensitiveAttrs) > 0 {
+		ret.BeforeSensitivePaths = beforeValSensitiveAttrs
 	}
-	if len(afterValMarks) > 0 {
-		ret.AfterValMarks = afterValMarks
+	if len(afterValSensitiveAttrs) > 0 {
+		ret.AfterSensitivePaths = afterValSensitiveAttrs
 	}
 
 	return ret, nil
@@ -431,6 +438,44 @@ func valueFromTfplan(rawV *planproto.DynamicValue) (plans.DynamicValue, error) {
 	}
 
 	return plans.DynamicValue(rawV.Msgpack), nil
+}
+
+func deferredChangeFromTfplan(dc *planproto.DeferredResourceInstanceChange) (*plans.DeferredResourceInstanceChangeSrc, error) {
+	if dc == nil {
+		return nil, fmt.Errorf("deferred change object is absent")
+	}
+
+	change, err := resourceChangeFromTfplan(dc.Change)
+	if err != nil {
+		return nil, err
+	}
+
+	reason, err := deferredReasonFromProto(dc.Deferred.Reason)
+	if err != nil {
+		return nil, err
+	}
+
+	return &plans.DeferredResourceInstanceChangeSrc{
+		DeferredReason: reason,
+		ChangeSrc:      change,
+	}, nil
+}
+
+func deferredReasonFromProto(reason planproto.DeferredReason) (providers.DeferredReason, error) {
+	switch reason {
+	case planproto.DeferredReason_INSTANCE_COUNT_UNKNOWN:
+		return providers.DeferredReasonInstanceCountUnknown, nil
+	case planproto.DeferredReason_RESOURCE_CONFIG_UNKNOWN:
+		return providers.DeferredReasonResourceConfigUnknown, nil
+	case planproto.DeferredReason_PROVIDER_CONFIG_UNKNOWN:
+		return providers.DeferredReasonProviderConfigUnknown, nil
+	case planproto.DeferredReason_ABSENT_PREREQ:
+		return providers.DeferredReasonAbsentPrereq, nil
+	case planproto.DeferredReason_DEFERRED_PREREQ:
+		return providers.DeferredReasonDeferredPrereq, nil
+	default:
+		return providers.DeferredReasonInvalid, fmt.Errorf("invalid deferred reason %s", reason)
+	}
 }
 
 // writeTfplan serializes the given plan into the protobuf-based format used
@@ -452,6 +497,7 @@ func writeTfplan(plan *plans.Plan, w io.Writer) error {
 		CheckResults:    []*planproto.CheckResults{},
 		ResourceChanges: []*planproto.ResourceInstanceChange{},
 		ResourceDrift:   []*planproto.ResourceInstanceChange{},
+		DeferredChanges: []*planproto.DeferredResourceInstanceChange{},
 	}
 
 	rawPlan.Applyable = plan.Applyable
@@ -514,6 +560,14 @@ func writeTfplan(plan *plans.Plan, w io.Writer) error {
 			return err
 		}
 		rawPlan.ResourceDrift = append(rawPlan.ResourceDrift, rawRC)
+	}
+
+	for _, dc := range plan.DeferredResources {
+		rawDC, err := deferredChangeToTfplan(dc)
+		if err != nil {
+			return err
+		}
+		rawPlan.DeferredChanges = append(rawPlan.DeferredChanges, rawDC)
 	}
 
 	for _, ra := range plan.RelevantAttributes {
@@ -731,11 +785,11 @@ func changeToTfplan(change *plans.ChangeSrc) (*planproto.Change, error) {
 	before := valueToTfplan(change.Before)
 	after := valueToTfplan(change.After)
 
-	beforeSensitivePaths, err := pathValueMarksToTfplan(change.BeforeValMarks)
+	beforeSensitivePaths, err := pathsToTfplan(change.BeforeSensitivePaths)
 	if err != nil {
 		return nil, err
 	}
-	afterSensitivePaths, err := pathValueMarksToTfplan(change.AfterValMarks)
+	afterSensitivePaths, err := pathsToTfplan(change.AfterSensitivePaths)
 	if err != nil {
 		return nil, err
 	}
@@ -785,25 +839,28 @@ func valueToTfplan(val plans.DynamicValue) *planproto.DynamicValue {
 	return planproto.NewPlanDynamicValue(val)
 }
 
-func pathValueMarksFromTfplan(paths []*planproto.Path, marks cty.ValueMarks) ([]cty.PathValueMarks, error) {
-	ret := make([]cty.PathValueMarks, 0, len(paths))
+func pathsFromTfplan(paths []*planproto.Path) ([]cty.Path, error) {
+	if len(paths) == 0 {
+		return nil, nil
+	}
+	ret := make([]cty.Path, 0, len(paths))
 	for _, p := range paths {
 		path, err := pathFromTfplan(p)
 		if err != nil {
 			return nil, err
 		}
-		ret = append(ret, cty.PathValueMarks{
-			Path:  path,
-			Marks: marks,
-		})
+		ret = append(ret, path)
 	}
 	return ret, nil
 }
 
-func pathValueMarksToTfplan(pvm []cty.PathValueMarks) ([]*planproto.Path, error) {
-	ret := make([]*planproto.Path, 0, len(pvm))
-	for _, p := range pvm {
-		path, err := pathToTfplan(p.Path)
+func pathsToTfplan(paths []cty.Path) ([]*planproto.Path, error) {
+	if len(paths) == 0 {
+		return nil, nil
+	}
+	ret := make([]*planproto.Path, 0, len(paths))
+	for _, p := range paths {
+		path, err := pathToTfplan(p)
 		if err != nil {
 			return nil, err
 		}
@@ -853,6 +910,42 @@ func pathFromTfplan(path *planproto.Path) (cty.Path, error) {
 
 func pathToTfplan(path cty.Path) (*planproto.Path, error) {
 	return planproto.NewPath(path)
+}
+
+func deferredChangeToTfplan(dc *plans.DeferredResourceInstanceChangeSrc) (*planproto.DeferredResourceInstanceChange, error) {
+	change, err := resourceChangeToTfplan(dc.ChangeSrc)
+	if err != nil {
+		return nil, err
+	}
+
+	reason, err := deferredReasonToProto(dc.DeferredReason)
+	if err != nil {
+		return nil, err
+	}
+
+	return &planproto.DeferredResourceInstanceChange{
+		Change: change,
+		Deferred: &planproto.Deferred{
+			Reason: reason,
+		},
+	}, nil
+}
+
+func deferredReasonToProto(reason providers.DeferredReason) (planproto.DeferredReason, error) {
+	switch reason {
+	case providers.DeferredReasonInstanceCountUnknown:
+		return planproto.DeferredReason_INSTANCE_COUNT_UNKNOWN, nil
+	case providers.DeferredReasonResourceConfigUnknown:
+		return planproto.DeferredReason_RESOURCE_CONFIG_UNKNOWN, nil
+	case providers.DeferredReasonProviderConfigUnknown:
+		return planproto.DeferredReason_PROVIDER_CONFIG_UNKNOWN, nil
+	case providers.DeferredReasonAbsentPrereq:
+		return planproto.DeferredReason_ABSENT_PREREQ, nil
+	case providers.DeferredReasonDeferredPrereq:
+		return planproto.DeferredReason_DEFERRED_PREREQ, nil
+	default:
+		return planproto.DeferredReason_INVALID, fmt.Errorf("invalid deferred reason %s", reason)
+	}
 }
 
 // CheckResultsFromPlanProto decodes a slice of check results from their protobuf

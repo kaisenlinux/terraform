@@ -141,6 +141,16 @@ type ServerCapabilities struct {
 	MoveResourceState bool
 }
 
+// ClientCapabilities allows Terraform to publish information regarding
+// supported protocol features. This is used to indicate availability of
+// certain forward-compatible changes which may be optional in a major
+// protocol version, but cannot be tested for directly.
+type ClientCapabilities struct {
+	// The deferral_allowed capability signals that the client is able to
+	// handle deferred responses from the provider.
+	DeferralAllowed bool
+}
+
 type ValidateProviderConfigRequest struct {
 	// Config is the raw configuration value for the provider.
 	Config cty.Value
@@ -214,6 +224,9 @@ type ConfigureProviderRequest struct {
 
 	// Config is the complete configuration value for the provider.
 	Config cty.Value
+
+	// ClientCapabilities contains information about the client's capabilities.
+	ClientCapabilities ClientCapabilities
 }
 
 type ConfigureProviderResponse struct {
@@ -237,6 +250,46 @@ type ReadResourceRequest struct {
 	// each provider, and it should not be used without coordination with
 	// HashiCorp. It is considered experimental and subject to change.
 	ProviderMeta cty.Value
+
+	// ClientCapabilities contains information about the client's capabilities.
+	ClientCapabilities ClientCapabilities
+}
+
+// DeferredReason is a string that describes why a resource was deferred.
+// It differs from the protobuf enum in that it adds more cases
+// since it's more widely used to represent the reason for deferral.
+// Reasons like instance count unknown and deferred prereq are not
+// relevant for providers but can occur in general.
+type DeferredReason string
+
+const (
+	// DeferredReasonInvalid is used when the reason for deferring is
+	// unknown or irrelevant.
+	DeferredReasonInvalid DeferredReason = "invalid"
+
+	// DeferredReasonInstanceCountUnknown is used when the reason for deferring
+	// is that the count or for_each meta-attribute was unknown.
+	DeferredReasonInstanceCountUnknown DeferredReason = "instance_count_unknown"
+
+	// DeferredReasonResourceConfigUnknown is used when the reason for deferring
+	// is that the resource configuration was unknown.
+	DeferredReasonResourceConfigUnknown DeferredReason = "resource_config_unknown"
+
+	// DeferredReasonProviderConfigUnknown is used when the reason for deferring
+	// is that the provider configuration was unknown.
+	DeferredReasonProviderConfigUnknown DeferredReason = "provider_config_unknown"
+
+	// DeferredReasonAbsentPrereq is used when the reason for deferring is that
+	// a required prerequisite resource was absent.
+	DeferredReasonAbsentPrereq DeferredReason = "absent_prereq"
+
+	// DeferredReasonDeferredPrereq is used when the reason for deferring is
+	// that a required prerequisite resource was itself deferred.
+	DeferredReasonDeferredPrereq DeferredReason = "deferred_prereq"
+)
+
+type Deferred struct {
+	Reason DeferredReason
 }
 
 type ReadResourceResponse struct {
@@ -249,6 +302,10 @@ type ReadResourceResponse struct {
 	// Private is an opaque blob that will be stored in state along with the
 	// resource. It is intended only for interpretation by the provider itself.
 	Private []byte
+
+	// Deferred if present signals that the provider was not able to fully
+	// complete this operation and a susequent run is required.
+	Deferred *Deferred
 }
 
 type PlanResourceChangeRequest struct {
@@ -279,6 +336,9 @@ type PlanResourceChangeRequest struct {
 	// each provider, and it should not be used without coordination with
 	// HashiCorp. It is considered experimental and subject to change.
 	ProviderMeta cty.Value
+
+	// ClientCapabilities contains information about the client's capabilities.
+	ClientCapabilities ClientCapabilities
 }
 
 type PlanResourceChangeResponse struct {
@@ -304,6 +364,10 @@ type PlanResourceChangeResponse struct {
 	// otherwise fail due to this imprecise mapping. No other provider or SDK
 	// implementation is permitted to set this.
 	LegacyTypeSystem bool
+
+	// Deferred if present signals that the provider was not able to fully
+	// complete this operation and a susequent run is required.
+	Deferred *Deferred
 }
 
 type ApplyResourceChangeRequest struct {
@@ -361,6 +425,9 @@ type ImportResourceStateRequest struct {
 	// ID is a string with which the provider can identify the resource to be
 	// imported.
 	ID string
+
+	// ClientCapabilities contains information about the client's capabilities.
+	ClientCapabilities ClientCapabilities
 }
 
 type ImportResourceStateResponse struct {
@@ -372,6 +439,10 @@ type ImportResourceStateResponse struct {
 
 	// Diagnostics contains any warnings or errors from the method call.
 	Diagnostics tfdiags.Diagnostics
+
+	// Deferred if present signals that the provider was not able to fully
+	// complete this operation and a susequent run is required.
+	Deferred *Deferred
 }
 
 // ImportedResource represents an object being imported into Terraform with the
@@ -463,6 +534,9 @@ type ReadDataSourceRequest struct {
 	// each provider, and it should not be used without coordination with
 	// HashiCorp. It is considered experimental and subject to change.
 	ProviderMeta cty.Value
+
+	// ClientCapabilities contains information about the client's capabilities.
+	ClientCapabilities ClientCapabilities
 }
 
 type ReadDataSourceResponse struct {
@@ -471,6 +545,10 @@ type ReadDataSourceResponse struct {
 
 	// Diagnostics contains any warnings or errors from the method call.
 	Diagnostics tfdiags.Diagnostics
+
+	// Deferred if present signals that the provider was not able to fully
+	// complete this operation and a susequent run is required.
+	Deferred *Deferred
 }
 
 type CallFunctionRequest struct {

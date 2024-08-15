@@ -9,6 +9,7 @@ import (
 
 	"github.com/hashicorp/terraform/internal/addrs"
 	"github.com/hashicorp/terraform/internal/plans"
+	"github.com/hashicorp/terraform/internal/providers"
 	"github.com/hashicorp/terraform/internal/states"
 	"github.com/hashicorp/terraform/internal/tfdiags"
 )
@@ -109,37 +110,6 @@ func (n *NodePlannableResourceInstanceOrphan) managedResourceExecute(ctx EvalCon
 		return diags
 	}
 
-	if !n.skipRefresh {
-		// Refresh this instance even though it is going to be destroyed, in
-		// order to catch missing resources. If this is a normal plan,
-		// providers expect a Read request to remove missing resources from the
-		// plan before apply, and may not handle a missing resource during
-		// Delete correctly.  If this is a simple refresh, Terraform is
-		// expected to remove the missing resource from the state entirely
-		refreshedState, refreshDiags := n.refresh(ctx, states.NotDeposed, oldState)
-		diags = diags.Append(refreshDiags)
-		if diags.HasErrors() {
-			return diags
-		}
-
-		diags = diags.Append(n.writeResourceInstanceState(ctx, refreshedState, refreshState))
-		if diags.HasErrors() {
-			return diags
-		}
-
-		// If we refreshed then our subsequent planning should be in terms of
-		// the new object, not the original object.
-		oldState = refreshedState
-	}
-
-	// If we're skipping planning, all we need to do is write the state. If the
-	// refresh indicates the instance no longer exists, there is also nothing
-	// to plan because there is no longer any state and it doesn't exist in the
-	// config.
-	if n.skipPlanChanges || oldState == nil || oldState.Value.IsNull() {
-		return diags.Append(n.writeResourceInstanceState(ctx, oldState, workingState))
-	}
-
 	var forget bool
 	for _, ft := range n.forgetResources {
 		if ft.Equal(n.ResourceAddr()) {
@@ -153,18 +123,66 @@ func (n *NodePlannableResourceInstanceOrphan) managedResourceExecute(ctx EvalCon
 	}
 	var change *plans.ResourceInstanceChange
 	var pDiags tfdiags.Diagnostics
+	var deferred *providers.Deferred
 	if forget {
 		change, pDiags = n.planForget(ctx, oldState, "")
 		diags = diags.Append(pDiags)
 	} else {
-		change, pDiags = n.planDestroy(ctx, oldState, "")
+		change, deferred, pDiags = n.planDestroy(ctx, oldState, "")
 		diags = diags.Append(pDiags)
-		if diags.HasErrors() {
+
+		if deferred != nil {
+			ctx.Deferrals().ReportResourceInstanceDeferred(n.Addr, deferred.Reason, &plans.ResourceInstanceChange{
+				Addr:   n.Addr,
+				Change: change.Change,
+			})
 			return diags
 		}
 	}
 	if diags.HasErrors() {
 		return diags
+	}
+
+	if !n.skipRefresh && !forget {
+		// Refresh this instance even though it is going to be destroyed, in
+		// order to catch missing resources. If this is a normal plan,
+		// providers expect a Read request to remove missing resources from the
+		// plan before apply, and may not handle a missing resource during
+		// Delete correctly.  If this is a simple refresh, Terraform is
+		// expected to remove the missing resource from the state entirely
+		refreshedState, deferred, refreshDiags := n.refresh(ctx, states.NotDeposed, oldState, ctx.Deferrals().DeferralAllowed())
+		diags = diags.Append(refreshDiags)
+		if diags.HasErrors() {
+			return diags
+		}
+
+		diags = diags.Append(n.writeResourceInstanceState(ctx, refreshedState, refreshState))
+		if diags.HasErrors() {
+			return diags
+		}
+
+		// If we refreshed then our subsequent planning should be in terms of
+		// the new object, not the original object.
+		if deferred == nil {
+			oldState = refreshedState
+		} else {
+			ctx.Deferrals().ReportResourceInstanceDeferred(n.Addr, deferred.Reason, &plans.ResourceInstanceChange{
+				Addr: n.Addr,
+				Change: plans.Change{
+					Action: plans.Read,
+					Before: oldState.Value,
+					After:  refreshedState.Value,
+				},
+			})
+		}
+	}
+
+	// If we're skipping planning, all we need to do is write the state. If the
+	// refresh indicates the instance no longer exists, there is also nothing
+	// to plan because there is no longer any state and it doesn't exist in the
+	// config.
+	if n.skipPlanChanges || oldState == nil || oldState.Value.IsNull() {
+		return diags.Append(n.writeResourceInstanceState(ctx, oldState, workingState))
 	}
 
 	// We might be able to offer an approximate reason for why we are

@@ -16,6 +16,7 @@ import (
 	"github.com/hashicorp/terraform/internal/configs"
 	"github.com/hashicorp/terraform/internal/didyoumean"
 	"github.com/hashicorp/terraform/internal/lang"
+	"github.com/hashicorp/terraform/internal/lang/langrefs"
 	"github.com/hashicorp/terraform/internal/terraform"
 	"github.com/hashicorp/terraform/internal/tfdiags"
 )
@@ -85,14 +86,22 @@ func (ec *EvalContext) Evaluate() (Status, cty.Value, tfdiags.Diagnostics) {
 	for i, rule := range run.Config.CheckRules {
 		var ruleDiags tfdiags.Diagnostics
 
-		refs, moreDiags := lang.ReferencesInExpr(addrs.ParseRefFromTestingScope, rule.Condition)
+		refs, moreDiags := langrefs.ReferencesInExpr(addrs.ParseRefFromTestingScope, rule.Condition)
 		ruleDiags = ruleDiags.Append(moreDiags)
-		moreRefs, moreDiags := lang.ReferencesInExpr(addrs.ParseRefFromTestingScope, rule.ErrorMessage)
+		moreRefs, moreDiags := langrefs.ReferencesInExpr(addrs.ParseRefFromTestingScope, rule.ErrorMessage)
 		ruleDiags = ruleDiags.Append(moreDiags)
 		refs = append(refs, moreRefs...)
 
 		hclCtx, moreDiags := scope.EvalContext(refs)
 		ruleDiags = ruleDiags.Append(moreDiags)
+		if moreDiags.HasErrors() {
+			// if we can't evaluate the context properly, we can't evaulate the rule
+			// we add the diagnostics to the main diags and continue to the next rule
+			log.Printf("[TRACE] EvalContext.Evaluate: check rule %d for %s is invalid, could not evalaute the context, so cannot evaluate it", i, ec.run.Addr())
+			status = status.Merge(Error)
+			diags = diags.Append(ruleDiags)
+			continue
+		}
 
 		errorMessage, moreDiags := lang.EvalCheckErrorMessage(rule.ErrorMessage, hclCtx)
 		ruleDiags = ruleDiags.Append(moreDiags)

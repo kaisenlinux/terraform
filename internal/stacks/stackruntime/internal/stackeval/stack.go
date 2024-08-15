@@ -13,8 +13,10 @@ import (
 
 	"github.com/hashicorp/terraform/internal/addrs"
 	"github.com/hashicorp/terraform/internal/collections"
-	"github.com/hashicorp/terraform/internal/lang"
+	"github.com/hashicorp/terraform/internal/instances"
+	"github.com/hashicorp/terraform/internal/lang/marks"
 	"github.com/hashicorp/terraform/internal/plans"
+	"github.com/hashicorp/terraform/internal/promising"
 	"github.com/hashicorp/terraform/internal/stacks/stackaddrs"
 	"github.com/hashicorp/terraform/internal/stacks/stackconfig"
 	"github.com/hashicorp/terraform/internal/stacks/stackconfig/typeexpr"
@@ -44,6 +46,7 @@ type Stack struct {
 	stackCalls     map[stackaddrs.StackCall]*StackCall
 	outputValues   map[stackaddrs.OutputValue]*OutputValue
 	components     map[stackaddrs.Component]*Component
+	providers      map[stackaddrs.ProviderConfigRef]*Provider
 }
 
 var _ ExpressionScope = (*Stack)(nil)
@@ -285,6 +288,16 @@ func (s *Stack) Component(ctx context.Context, addr stackaddrs.Component) *Compo
 }
 
 func (s *Stack) ProviderByLocalAddr(ctx context.Context, localAddr stackaddrs.ProviderConfigRef) *Provider {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if existing, ok := s.providers[localAddr]; ok {
+		return existing
+	}
+	if s.providers == nil {
+		s.providers = make(map[stackaddrs.ProviderConfigRef]*Provider)
+	}
+
 	decls := s.ConfigDeclarations(ctx)
 
 	sourceAddr, ok := decls.RequiredProviders.ProviderForLocalName(localAddr.ProviderLocalName)
@@ -312,7 +325,9 @@ func (s *Stack) ProviderByLocalAddr(ctx context.Context, localAddr stackaddrs.Pr
 		return nil
 	}
 
-	return newProvider(s.main, configAddr, decl)
+	provider := newProvider(s.main, configAddr, decl)
+	s.providers[localAddr] = provider
+	return provider
 }
 
 func (s *Stack) Provider(ctx context.Context, addr stackaddrs.ProviderConfig) *Provider {
@@ -390,14 +405,14 @@ func (s *Stack) ResultValue(ctx context.Context, phase EvalPhase) cty.Value {
 // global scope for evaluation within an already-instanciated stack during the
 // plan and apply phases.
 func (s *Stack) ResolveExpressionReference(ctx context.Context, ref stackaddrs.Reference) (Referenceable, tfdiags.Diagnostics) {
-	return s.resolveExpressionReference(ctx, ref, nil, lang.RepetitionData{})
+	return s.resolveExpressionReference(ctx, ref, nil, instances.RepetitionData{})
 }
 
 // resolveExpressionReference is a shared implementation of [ExpressionScope]
 // used for this stack's scope and all of the nested scopes of declarations
 // in the same stack, since they tend to differ only in what "self" means
 // and what each.key, each.value, or count.index are set to (if anything).
-func (s *Stack) resolveExpressionReference(ctx context.Context, ref stackaddrs.Reference, selfAddr stackaddrs.Referenceable, repetition lang.RepetitionData) (Referenceable, tfdiags.Diagnostics) {
+func (s *Stack) resolveExpressionReference(ctx context.Context, ref stackaddrs.Reference, selfAddr stackaddrs.Referenceable, repetition instances.RepetitionData) (Referenceable, tfdiags.Diagnostics) {
 	var diags tfdiags.Diagnostics
 
 	// "Test-only globals" is a special affordance we have only when running
@@ -564,6 +579,20 @@ func (s *Stack) PlanChanges(ctx context.Context) ([]stackplan.PlannedChange, tfd
 		// produce accurate change actions.
 
 		v, markses := v.UnmarkDeepWithPaths()
+		sensitivePaths, otherMarkses := marks.PathsWithMark(markses, marks.Sensitive)
+		if len(otherMarkses) != 0 {
+			// Any other marks should've been dealt with by our caller before
+			// getting here, since we only know how to preserve the sensitive
+			// marking.
+			var diags tfdiags.Diagnostics
+			diags = diags.Append(fmt.Errorf(
+				"%s%s: unhandled value marks %#v (this is a bug in Terraform)",
+				outputAddr,
+				tfdiags.FormatCtyPath(otherMarkses[0].Path),
+				otherMarkses[0].Marks,
+			))
+			return nil, diags
+		}
 		dv, err := plans.NewDynamicValue(v, v.Type())
 		if err != nil {
 			// Should not be possible since we generated the value internally;
@@ -581,11 +610,11 @@ func (s *Stack) PlanChanges(ctx context.Context) ([]stackplan.PlannedChange, tfd
 			Addr:   outputAddr,
 			Action: plans.Create,
 
-			OldValue:      oldDV,
-			OldValueMarks: nil,
+			OldValue:               oldDV,
+			OldValueSensitivePaths: nil,
 
-			NewValue:      dv,
-			NewValueMarks: markses,
+			NewValue:               dv,
+			NewValueSensitivePaths: sensitivePaths,
 		})
 	}
 	return changes, nil
@@ -611,4 +640,29 @@ func (s *Stack) tracingName() string {
 		return "root stack"
 	}
 	return addr.String()
+}
+
+// reportNamedPromises implements namedPromiseReporter.
+func (s *Stack) reportNamedPromises(cb func(id promising.PromiseID, name string)) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	for _, child := range s.childStacks {
+		child.reportNamedPromises(cb)
+	}
+	for _, child := range s.inputVariables {
+		child.reportNamedPromises(cb)
+	}
+	for _, child := range s.outputValues {
+		child.reportNamedPromises(cb)
+	}
+	for _, child := range s.stackCalls {
+		child.reportNamedPromises(cb)
+	}
+	for _, child := range s.components {
+		child.reportNamedPromises(cb)
+	}
+	for _, child := range s.providers {
+		child.reportNamedPromises(cb)
+	}
 }

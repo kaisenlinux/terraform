@@ -16,6 +16,7 @@ import (
 	"github.com/hashicorp/terraform/internal/addrs"
 	"github.com/hashicorp/terraform/internal/checks"
 	"github.com/hashicorp/terraform/internal/configs"
+	"github.com/hashicorp/terraform/internal/lang/langrefs"
 	"github.com/hashicorp/terraform/internal/lang/marks"
 	"github.com/hashicorp/terraform/internal/tfdiags"
 )
@@ -197,8 +198,8 @@ func prepareFinalInputVariableValue(addr addrs.AbsInputVariableInstance, raw *In
 // This must be used only after any side-effects that make the value of the
 // variable available for use in expression evaluation, such as
 // EvalModuleCallArgument for variables in descendent modules.
-func evalVariableValidations(addr addrs.AbsInputVariableInstance, config *configs.Variable, expr hcl.Expression, ctx EvalContext) (diags tfdiags.Diagnostics) {
-	if config == nil || len(config.Validations) == 0 {
+func evalVariableValidations(addr addrs.AbsInputVariableInstance, ctx EvalContext, rules []*configs.CheckRule, valueRng hcl.Range) (diags tfdiags.Diagnostics) {
+	if len(rules) == 0 {
 		log.Printf("[TRACE] evalVariableValidations: no validation rules declared for %s, so skipping", addr)
 		return nil
 	}
@@ -208,41 +209,78 @@ func evalVariableValidations(addr addrs.AbsInputVariableInstance, config *config
 	if !checkState.ConfigHasChecks(addr.ConfigCheckable()) {
 		// We have nothing to do if this object doesn't have any checks,
 		// but the "rules" slice should agree that we don't.
-		if ct := len(config.Validations); ct != 0 {
+		if ct := len(rules); ct != 0 {
 			panic(fmt.Sprintf("check state says that %s should have no rules, but it has %d", addr, ct))
 		}
 		return diags
 	}
 
-	// Variable nodes evaluate in the parent module to where they were declared
-	// because the value expression (n.Expr, if set) comes from the calling
-	// "module" block in the parent module.
-	//
-	// Validation expressions are statically validated (during configuration
-	// loading) to refer only to the variable being validated, so we can
-	// bypass our usual evaluation machinery here and just produce a minimal
-	// evaluation context containing just the required value, and thus avoid
-	// the problem that ctx's evaluation functions refer to the wrong module.
-	val := ctx.NamedValues().GetInputVariableValue(addr)
-	if val == cty.NilVal {
-		diags = diags.Append(&hcl.Diagnostic{
-			Severity: hcl.DiagError,
-			Summary:  "No final value for variable",
-			Detail:   fmt.Sprintf("Terraform doesn't have a final value for %s during validation. This is a bug in Terraform; please report it!", addr),
-		})
+	// We'll build just one evaluation context covering the data needed by
+	// all of the rules together, since that'll minimize lock contention
+	// on the state, plan, etc.
+	scope := ctx.EvaluationScope(nil, nil, EvalDataForNoInstanceKey)
+	var refs []*addrs.Reference
+	for _, rule := range rules {
+		condRefs, moreDiags := langrefs.ReferencesInExpr(addrs.ParseRef, rule.Condition)
+		diags = diags.Append(moreDiags)
+		msgRefs, moreDiags := langrefs.ReferencesInExpr(addrs.ParseRef, rule.ErrorMessage)
+		diags = diags.Append(moreDiags)
+		refs = append(refs, condRefs...)
+		refs = append(refs, msgRefs...)
+	}
+	if diags.HasErrors() {
+		// If any of the references were invalid then evaluating the expressions
+		// will duplicate those errors, so we'll bail out early.
 		return diags
 	}
-	hclCtx := &hcl.EvalContext{
-		Variables: map[string]cty.Value{
-			"var": cty.ObjectVal(map[string]cty.Value{
-				config.Name: val,
-			}),
-		},
-		Functions: ctx.EvaluationScope(nil, nil, EvalDataForNoInstanceKey).Functions(),
+	hclCtx, moreDiags := scope.EvalContext(refs)
+	diags = diags.Append(moreDiags)
+	if moreDiags.HasErrors() {
+		return diags
 	}
 
-	for ix, validation := range config.Validations {
-		result, ruleDiags := evalVariableValidation(validation, hclCtx, addr, config, expr, ix)
+	// HACK: Historically we manually built a very constrained hcl.EvalContext
+	// here, which only included the value of the one specific input variable
+	// we're validating, since we didn't yet support referring to anything
+	// else. That accidentally bypassed our rule that input variables are
+	// always unknown during the validate walk, and thus accidentally created
+	// a useful behavior of actually checking constant-only values against
+	// their validation rules just during "terraform validate", rather than
+	// having to run "terraform plan".
+	//
+	// Although that behavior was accidental, it makes simple validation rules
+	// more useful and is protected by compatibility promises, and so we'll
+	// fake it here by overwriting the unknown value that scope.EvalContext
+	// will have inserted with a possibly-more-known value using the same
+	// strategy our special code used to use.
+	ourVal := ctx.NamedValues().GetInputVariableValue(addr)
+	if ourVal != cty.NilVal {
+		// (it would be weird for ourVal to be nil here, but we'll tolerate it
+		// because it was scope.EvalContext's responsibility to check for the
+		// absent final value, and even if it didn't we'll just get an
+		// evaluation error when evaluating the expressions below anyway.)
+
+		// Our goal here is to make sure that a reference to the variable
+		// we're checking will evaluate to ourVal, regardless of what else
+		// scope.EvalContext might have put in the variables table.
+		if hclCtx.Variables == nil {
+			hclCtx.Variables = make(map[string]cty.Value)
+		}
+		if varsVal, ok := hclCtx.Variables["var"]; ok {
+			// Unfortunately we need to unpack and repack the object here,
+			// because cty values are immutable.
+			attrs := varsVal.AsValueMap()
+			attrs[addr.Variable.Name] = ourVal
+			hclCtx.Variables["var"] = cty.ObjectVal(attrs)
+		} else {
+			hclCtx.Variables["var"] = cty.ObjectVal(map[string]cty.Value{
+				addr.Variable.Name: ourVal,
+			})
+		}
+	}
+
+	for ix, validation := range rules {
+		result, ruleDiags := evalVariableValidation(validation, hclCtx, valueRng, addr, ix)
 		diags = diags.Append(ruleDiags)
 
 		log.Printf("[TRACE] evalVariableValidations: %s status is now %s", addr, result.Status)
@@ -256,7 +294,7 @@ func evalVariableValidations(addr addrs.AbsInputVariableInstance, config *config
 	return diags
 }
 
-func evalVariableValidation(validation *configs.CheckRule, hclCtx *hcl.EvalContext, addr addrs.AbsInputVariableInstance, config *configs.Variable, expr hcl.Expression, ix int) (checkResult, tfdiags.Diagnostics) {
+func evalVariableValidation(validation *configs.CheckRule, hclCtx *hcl.EvalContext, valueRng hcl.Range, addr addrs.AbsInputVariableInstance, ix int) (checkResult, tfdiags.Diagnostics) {
 	const errInvalidCondition = "Invalid variable validation result"
 	const errInvalidValue = "Invalid value for variable"
 	var diags tfdiags.Diagnostics
@@ -359,8 +397,23 @@ func evalVariableValidation(validation *configs.CheckRule, hclCtx *hcl.EvalConte
 		return checkResult{Status: status}, diags
 	}
 
+	if !errorValue.IsKnown() {
+		diags = diags.Append(&hcl.Diagnostic{
+			Severity:    hcl.DiagError,
+			Summary:     "Invalid error message",
+			Detail:      "Unsuitable value for error message: expression refers to values that won't be known until the apply phase.",
+			Subject:     validation.ErrorMessage.Range().Ptr(),
+			Expression:  validation.ErrorMessage,
+			EvalContext: hclCtx,
+			Extra:       diagnosticCausedByUnknown(true),
+		})
+		return checkResult{
+			Status: checks.StatusError,
+		}, diags
+	}
+
 	var errorMessage string
-	if !errorDiags.HasErrors() && errorValue.IsKnown() && !errorValue.IsNull() {
+	if !errorDiags.HasErrors() && !errorValue.IsNull() {
 		var err error
 		errorValue, err = convert.Convert(errorValue, cty.String)
 		if err != nil {
@@ -396,34 +449,17 @@ You can correct this by removing references to sensitive values, or by carefully
 		errorMessage = "Failed to evaluate condition error message."
 	}
 
-	if expr != nil {
-		diags = diags.Append(&hcl.Diagnostic{
-			Severity:    hcl.DiagError,
-			Summary:     errInvalidValue,
-			Detail:      fmt.Sprintf("%s\n\nThis was checked by the validation rule at %s.", errorMessage, validation.DeclRange.String()),
-			Subject:     expr.Range().Ptr(),
-			Expression:  validation.Condition,
-			EvalContext: hclCtx,
-			Extra: &addrs.CheckRuleDiagnosticExtra{
-				CheckRule: addr.CheckRule(addrs.InputValidation, ix),
-			},
-		})
-	} else {
-		// Since we don't have a source expression for a root module
-		// variable, we'll just report the error from the perspective
-		// of the variable declaration itself.
-		diags = diags.Append(&hcl.Diagnostic{
-			Severity:    hcl.DiagError,
-			Summary:     errInvalidValue,
-			Detail:      fmt.Sprintf("%s\n\nThis was checked by the validation rule at %s.", errorMessage, validation.DeclRange.String()),
-			Subject:     config.DeclRange.Ptr(),
-			Expression:  validation.Condition,
-			EvalContext: hclCtx,
-			Extra: &addrs.CheckRuleDiagnosticExtra{
-				CheckRule: addr.CheckRule(addrs.InputValidation, ix),
-			},
-		})
-	}
+	diags = diags.Append(&hcl.Diagnostic{
+		Severity:    hcl.DiagError,
+		Summary:     errInvalidValue,
+		Detail:      fmt.Sprintf("%s\n\nThis was checked by the validation rule at %s.", errorMessage, validation.DeclRange.String()),
+		Subject:     valueRng.Ptr(),
+		Expression:  validation.Condition,
+		EvalContext: hclCtx,
+		Extra: &addrs.CheckRuleDiagnosticExtra{
+			CheckRule: addr.CheckRule(addrs.InputValidation, ix),
+		},
+	})
 
 	return checkResult{
 		Status:         status,

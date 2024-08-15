@@ -14,7 +14,6 @@ import (
 
 	"github.com/hashicorp/terraform/internal/addrs"
 	"github.com/hashicorp/terraform/internal/configs"
-	"github.com/hashicorp/terraform/internal/lang"
 	"github.com/hashicorp/terraform/internal/moduletest/mocking"
 )
 
@@ -599,7 +598,7 @@ func TestExpander(t *testing.T) {
 		got := ex.GetModuleInstanceRepetitionData(
 			mustModuleInstanceAddr(`module.for_each["b"]`),
 		)
-		want := lang.RepetitionData{
+		want := RepetitionData{
 			EachKey:   cty.StringVal("b"),
 			EachValue: cty.NumberIntVal(2),
 		}
@@ -611,7 +610,7 @@ func TestExpander(t *testing.T) {
 		got := ex.GetModuleInstanceRepetitionData(
 			mustModuleInstanceAddr(`module.count2[0].module.count2[1]`),
 		)
-		want := lang.RepetitionData{
+		want := RepetitionData{
 			CountIndex: cty.NumberIntVal(1),
 		}
 		if diff := cmp.Diff(want, got, cmp.Comparer(valueEquals)); diff != "" {
@@ -622,7 +621,7 @@ func TestExpander(t *testing.T) {
 		got := ex.GetModuleInstanceRepetitionData(
 			mustModuleInstanceAddr(`module.for_each["a"]`),
 		)
-		want := lang.RepetitionData{
+		want := RepetitionData{
 			EachKey:   cty.StringVal("a"),
 			EachValue: cty.NumberIntVal(1),
 		}
@@ -635,7 +634,7 @@ func TestExpander(t *testing.T) {
 		got := ex.GetResourceInstanceRepetitionData(
 			mustAbsResourceInstanceAddr(`test.for_each["a"]`),
 		)
-		want := lang.RepetitionData{
+		want := RepetitionData{
 			EachKey:   cty.StringVal("a"),
 			EachValue: cty.NumberIntVal(1),
 		}
@@ -647,7 +646,7 @@ func TestExpander(t *testing.T) {
 		got := ex.GetResourceInstanceRepetitionData(
 			mustAbsResourceInstanceAddr(`module.for_each["a"].test.single`),
 		)
-		want := lang.RepetitionData{}
+		want := RepetitionData{}
 		if diff := cmp.Diff(want, got, cmp.Comparer(valueEquals)); diff != "" {
 			t.Errorf("wrong result\n%s", diff)
 		}
@@ -656,7 +655,7 @@ func TestExpander(t *testing.T) {
 		got := ex.GetResourceInstanceRepetitionData(
 			mustAbsResourceInstanceAddr(`module.for_each["a"].test.count2[1]`),
 		)
-		want := lang.RepetitionData{
+		want := RepetitionData{
 			CountIndex: cty.NumberIntVal(1),
 		}
 		if diff := cmp.Diff(want, got, cmp.Comparer(valueEquals)); diff != "" {

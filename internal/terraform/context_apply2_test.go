@@ -422,11 +422,8 @@ resource "test_resource" "b" {
 			mustResourceInstanceAddr(`test_resource.a`),
 			&states.ResourceInstanceObjectSrc{
 				AttrsJSON: []byte(`{"id":"a","sensitive_attr":["secret"]}`),
-				AttrSensitivePaths: []cty.PathValueMarks{
-					{
-						Path:  cty.GetAttrPath("sensitive_attr"),
-						Marks: cty.NewValueMarks(marks.Sensitive),
-					},
+				AttrSensitivePaths: []cty.Path{
+					cty.GetAttrPath("sensitive_attr"),
 				},
 				Status: states.ObjectReady,
 			}, mustProviderConfig(`provider["registry.terraform.io/hashicorp/test"]`),
@@ -556,8 +553,8 @@ resource "test_object" "y" {
 	// make sure the same marks are compared in the next plan as well
 	for _, c := range plan.Changes.Resources {
 		if c.Action != plans.NoOp {
-			t.Logf("marks before: %#v", c.BeforeValMarks)
-			t.Logf("marks after:  %#v", c.AfterValMarks)
+			t.Logf("sensitive paths before: %#v", c.BeforeSensitivePaths)
+			t.Logf("sensitive paths after:  %#v", c.AfterSensitivePaths)
 			t.Errorf("Unexpcetd %s change for %s", c.Action, c.Addr)
 		}
 	}
@@ -1339,7 +1336,6 @@ output "out" {
 
 	_, diags = ctx.Plan(m, state, opts)
 	assertNoErrors(t, diags)
-	return
 
 	otherProvider.ConfigureProviderCalled = false
 	otherProvider.ConfigureProviderFn = func(req providers.ConfigureProviderRequest) (resp providers.ConfigureProviderResponse) {
@@ -2104,7 +2100,7 @@ resource "test_resource" "a" {
 
 import {
   to = test_resource.a
-  id = "importable" 
+  id = "importable"
 }
 `,
 	})
@@ -2179,6 +2175,13 @@ variable "input" {
         condition = var.input == "foo"
         error_message = "bad input"
     }
+}
+
+# In order for the variable to be validated during destroy, it must be required
+# by the destroy plan. This is done by having the test provider require the
+# value in order to destroy the test_object instance.
+provider "test" {
+  test_string = var.input
 }
 
 resource "test_object" "a" {
@@ -2639,489 +2642,6 @@ resource "test_object" "foo" {
 	}
 }
 
-func TestContext2Apply_deferredActionsResourceForEach(t *testing.T) {
-	// This test exercises a situation that requires two plan/apply
-	// rounds to achieve convergence when starting from an empty state.
-	//
-	// The scenario is slightly contrived to make the scenario easier
-	// to orchestrate: the unknown for_each value originates from an
-	// input variable rather than directly from a resource. This
-	// scenario _is_ realistic in a Terraform Stacks context, if we
-	// pretend that the input variable is being populated from an
-	// as-yet-unknown result from an upstream component.
-
-	cfg := testModuleInline(t, map[string]string{
-		"main.tf": `
-			// TEMP: unknown for_each currently requires an experiment opt-in.
-			// We should remove this block if the experiment gets stabilized.
-			terraform {
-				experiments = [unknown_instances]
-			}
-
-			variable "each" {
-				type = set(string)
-			}
-
-			resource "test" "a" {
-				name = "a"
-			}
-
-			resource "test" "b" {
-				for_each = var.each
-
-				name           = "b:${each.key}"
-				upstream_names = [test.a.name]
-			}
-
-			resource "test" "c" {
-				name = "c"
-				upstream_names = setunion(
-					[for v in test.b : v.name],
-					[test.a.name],
-				)
-			}
-
-			output "a" {
-				value = test.a
-			}
-			output "b" {
-				value = test.b
-			}
-			output "c" {
-				value = test.c
-			}
-		`,
-	})
-
-	var plannedVals sync.Map
-	var appliedVals sync.Map
-	p := &testing_provider.MockProvider{
-		GetProviderSchemaResponse: &providers.GetProviderSchemaResponse{
-			ResourceTypes: map[string]providers.Schema{
-				"test": {
-					Block: &configschema.Block{
-						Attributes: map[string]*configschema.Attribute{
-							"name": {
-								Type:     cty.String,
-								Required: true,
-							},
-							"upstream_names": {
-								Type:     cty.Set(cty.String),
-								Optional: true,
-							},
-						},
-					},
-				},
-			},
-		},
-		PlanResourceChangeFn: func(req providers.PlanResourceChangeRequest) providers.PlanResourceChangeResponse {
-			mapKey := "<unknown>"
-			if v := req.Config.GetAttr("name"); v.IsKnown() {
-				mapKey = v.AsString()
-			}
-			plannedVals.Store(mapKey, req.ProposedNewState)
-			return providers.PlanResourceChangeResponse{
-				PlannedState: req.ProposedNewState,
-			}
-		},
-		ApplyResourceChangeFn: func(req providers.ApplyResourceChangeRequest) providers.ApplyResourceChangeResponse {
-			mapKey := req.Config.GetAttr("name").AsString() // should always be known during apply
-			appliedVals.Store(mapKey, req.PlannedState)
-			return providers.ApplyResourceChangeResponse{
-				NewState: req.PlannedState,
-			}
-		},
-	}
-	state := states.NewState()
-	reset := func(newState *states.State) {
-		if newState != nil {
-			state = newState
-		}
-		plannedVals = sync.Map{}
-		appliedVals = sync.Map{}
-	}
-	normalMap := func(m *sync.Map) map[any]any {
-		ret := make(map[any]any)
-		m.Range(func(key, value any) bool {
-			ret[key] = value
-			return true
-		})
-		return ret
-	}
-	resourceInstancesActionsInPlan := func(p *plans.Plan) map[string]plans.Action {
-		ret := make(map[string]plans.Action)
-		for _, cs := range p.Changes.Resources {
-			// Anything that was deferred will not appear in the result at
-			// all. Non-deferred actions that don't actually need to do anything
-			// _will_ appear, but with action set to [plans.NoOp].
-			ret[cs.Addr.String()] = cs.Action
-		}
-		return ret
-	}
-	outputValsInState := func(s *states.State) map[string]cty.Value {
-		ret := make(map[string]cty.Value)
-		for n, v := range s.RootOutputValues {
-			ret[n] = v.Value
-		}
-		return ret
-	}
-	cmpOpts := cmp.Options{
-		ctydebug.CmpOptions,
-	}
-
-	ctx := testContext2(t, &ContextOpts{
-		Providers: map[addrs.Provider]providers.Factory{
-			addrs.NewDefaultProvider("test"): testProviderFuncFixed(p),
-		},
-	})
-	reset(states.NewState())
-
-	// Round 1: Should plan and apply changes only for test.a
-	{
-		t.Logf("--- First plan: var.each is unknown ---")
-		plan, diags := ctx.Plan(cfg, state, &PlanOpts{
-			Mode: plans.NormalMode,
-			SetVariables: InputValues{
-				"each": {
-					Value:      cty.DynamicVal,
-					SourceType: ValueFromCaller,
-				},
-			},
-		})
-		assertNoDiagnostics(t, diags)
-		checkPlanApplyable(t, plan)
-		if plan.Complete {
-			t.Fatal("plan is complete; should have deferred actions")
-		}
-
-		gotPlanned := normalMap(&plannedVals)
-		wantPlanned := map[any]any{
-			// We should've still got one plan request for each resource block,
-			// but the one for "b" doesn't yet know its own name, so is
-			// captured under "<unknown>".
-			"a": cty.ObjectVal(map[string]cty.Value{
-				"name":           cty.StringVal("a"),
-				"upstream_names": cty.NullVal(cty.Set(cty.String)),
-			}),
-			"<unknown>": cty.ObjectVal(map[string]cty.Value{
-				// this one is the placeholder for all possible instances of test.b,
-				// describing only what they all have in common.
-				// Terraform knows at least that all of the names start
-				// with "b:", even though the rest of the name is unknown.
-				"name": cty.UnknownVal(cty.String).Refine().
-					StringPrefixFull("b:").
-					NotNull().
-					NewValue(),
-				"upstream_names": cty.SetVal([]cty.Value{
-					cty.StringVal("a"),
-				}),
-			}),
-			"c": cty.ObjectVal(map[string]cty.Value{
-				"name":           cty.StringVal("c"),
-				"upstream_names": cty.UnknownVal(cty.Set(cty.String)).RefineNotNull(),
-			}),
-		}
-		if diff := cmp.Diff(wantPlanned, gotPlanned, cmpOpts); diff != "" {
-			t.Fatalf("wrong planned objects\n%s", diff)
-		}
-
-		gotActions := resourceInstancesActionsInPlan(plan)
-		wantActions := map[string]plans.Action{
-			// Only test.a has a planned action
-			"test.a": plans.Create,
-			// test.b was deferred because of its unknown for_each
-			// test.c was deferred because it depends on test.b
-		}
-		if diff := cmp.Diff(wantActions, gotActions, cmpOpts); diff != "" {
-			t.Fatalf("wrong actions in plan\n%s", diff)
-		}
-		// TODO: Once we are including information about the individual
-		// deferred actions in the plan, this would be a good place to
-		// assert that they are correct!
-
-		reset(nil)
-		t.Logf("--- First apply: only dealing with test.a for now ---")
-		newState, diags := ctx.Apply(plan, cfg, &ApplyOpts{})
-		assertNoDiagnostics(t, diags)
-
-		gotApplied := normalMap(&appliedVals)
-		wantApplied := map[any]any{
-			// Only test.a had non-deferred actions, so we only visited that
-			// one during the apply step.
-			"a": cty.ObjectVal(map[string]cty.Value{
-				"name":           cty.StringVal("a"),
-				"upstream_names": cty.NullVal(cty.Set(cty.String)),
-			}),
-		}
-		if diff := cmp.Diff(wantApplied, gotApplied, cmpOpts); diff != "" {
-			t.Fatalf("wrong applied objects\n%s", diff)
-		}
-
-		gotOutputs := outputValsInState(newState)
-		// FIXME: The system is currently producing incorrect results for
-		// output values that are derived from resources that had deferred
-		// actions, because we're not quite reconstructing all of the deferral
-		// state correctly during the apply phase. The commented-out wantOutputs
-		// below shows how this _ought_ to look, but we're accepting the
-		// incorrect answer for now so we can start go gather feedback on the
-		// experiment sooner, since the output value state at the interim
-		// steps isn't really that important for demonstrating the overall
-		// effect. We should fix this before stabilizing the experiment, though.
-		/*
-			wantOutputs := map[string]cty.Value{
-				// A is fully resolved and known.
-				"a": cty.ObjectVal(map[string]cty.Value{
-					"name":           cty.StringVal("a"),
-					"upstream_names": cty.NullVal(cty.Set(cty.String)),
-				}),
-				// We can't say anything about test.b until we know what its instance keys are.
-				"b": cty.DynamicVal,
-				// test.c evaluates to the placeholder value that shows what we're
-				// expecting this object to look like in the next round.
-				"c": cty.ObjectVal(map[string]cty.Value{
-					"name":           cty.StringVal("c"),
-					"upstream_names": cty.UnknownVal(cty.Set(cty.String)).RefineNotNull(),
-				}),
-			}
-		*/
-		wantOutputs := map[string]cty.Value{
-			// A is fully resolved and known.
-			"a": cty.ObjectVal(map[string]cty.Value{
-				"name":           cty.StringVal("a"),
-				"upstream_names": cty.NullVal(cty.Set(cty.String)),
-			}),
-			// Currently we produce an incorrect result for output value "b"
-			// because the expression evaluator doesn't realize it's supposed
-			// to be treating this as deferred during the apply phase, and
-			// so it incorrectly decides that there are no instances due to
-			// the lack of instances in the state.
-			"b": cty.EmptyObjectVal,
-			// Currently we produce an incorrect result for output value "c"
-			// because the expression evaluator doesn't realize it's supposed
-			// to be treating this as deferred during the apply phase, and
-			// so it incorrectly decides that there is instance due to
-			// the lack of instances in the state.
-			"c": cty.NullVal(cty.DynamicPseudoType),
-		}
-		if diff := cmp.Diff(gotOutputs, wantOutputs, cmpOpts); diff != "" {
-			t.Errorf("wrong output values\n%s", diff)
-		}
-
-		// Save the new state to use in round 2, and also reset our
-		// provider-call-tracking maps.
-		t.Log("(round 1 complete)")
-		reset(newState)
-	}
-
-	// Round 2: reach convergence by dealing with test.b and test.c
-	{
-		t.Logf("--- Second plan: var.each is now known, with two elements ---")
-		plan, diags := ctx.Plan(cfg, state, &PlanOpts{
-			Mode: plans.NormalMode,
-			SetVariables: InputValues{
-				"each": {
-					Value: cty.SetVal([]cty.Value{
-						cty.StringVal("1"),
-						cty.StringVal("2"),
-					}),
-					SourceType: ValueFromCaller,
-				},
-			},
-		})
-		assertNoDiagnostics(t, diags)
-		checkPlanCompleteAndApplyable(t, plan)
-
-		gotPlanned := normalMap(&plannedVals)
-		wantPlanned := map[any]any{
-			// test.a gets re-planned (to confirm that nothing has changed)
-			"a": cty.ObjectVal(map[string]cty.Value{
-				"name":           cty.StringVal("a"),
-				"upstream_names": cty.NullVal(cty.Set(cty.String)),
-			}),
-			// test.b is now planned for real, once for each instance
-			"b:1": cty.ObjectVal(map[string]cty.Value{
-				"name": cty.StringVal("b:1"),
-				"upstream_names": cty.SetVal([]cty.Value{
-					cty.StringVal("a"),
-				}),
-			}),
-			"b:2": cty.ObjectVal(map[string]cty.Value{
-				"name": cty.StringVal("b:2"),
-				"upstream_names": cty.SetVal([]cty.Value{
-					cty.StringVal("a"),
-				}),
-			}),
-			// test.c gets re-planned, so we can finalize its values
-			// based on the new results from test.b.
-			"c": cty.ObjectVal(map[string]cty.Value{
-				"name": cty.StringVal("c"),
-				"upstream_names": cty.SetVal([]cty.Value{
-					cty.StringVal("a"),
-					cty.StringVal("b:1"),
-					cty.StringVal("b:2"),
-				}),
-			}),
-		}
-		if diff := cmp.Diff(wantPlanned, gotPlanned, cmpOpts); diff != "" {
-			t.Fatalf("wrong planned objects\n%s", diff)
-		}
-
-		gotActions := resourceInstancesActionsInPlan(plan)
-		wantActions := map[string]plans.Action{
-			// Since this plan is "complete", we expect to have a planned
-			// action for every resource instance, although test.a is
-			// no-op because nothing has changed for it since last round.
-			`test.a`:      plans.NoOp,
-			`test.b["1"]`: plans.Create,
-			`test.b["2"]`: plans.Create,
-			`test.c`:      plans.Create,
-		}
-		if diff := cmp.Diff(wantActions, gotActions, cmpOpts); diff != "" {
-			t.Fatalf("wrong actions in plan\n%s", diff)
-		}
-
-		reset(nil)
-		t.Logf("--- Second apply: Getting everything else created ---")
-		newState, diags := ctx.Apply(plan, cfg, &ApplyOpts{})
-		assertNoDiagnostics(t, diags)
-
-		gotApplied := normalMap(&appliedVals)
-		wantApplied := map[any]any{
-			// Since test.a is no-op, it isn't visited during apply. The
-			// other instances should all be applied, though.
-			"b:1": cty.ObjectVal(map[string]cty.Value{
-				"name": cty.StringVal("b:1"),
-				"upstream_names": cty.SetVal([]cty.Value{
-					cty.StringVal("a"),
-				}),
-			}),
-			"b:2": cty.ObjectVal(map[string]cty.Value{
-				"name": cty.StringVal("b:2"),
-				"upstream_names": cty.SetVal([]cty.Value{
-					cty.StringVal("a"),
-				}),
-			}),
-			"c": cty.ObjectVal(map[string]cty.Value{
-				"name": cty.StringVal("c"),
-				"upstream_names": cty.SetVal([]cty.Value{
-					cty.StringVal("a"),
-					cty.StringVal("b:1"),
-					cty.StringVal("b:2"),
-				}),
-			}),
-		}
-		if diff := cmp.Diff(wantApplied, gotApplied, cmpOpts); diff != "" {
-			t.Fatalf("wrong applied objects\n%s", diff)
-		}
-
-		gotOutputs := outputValsInState(newState)
-		wantOutputs := map[string]cty.Value{
-			// Now everything should be fully resolved and known.
-			// A is fully resolved and known.
-			"a": cty.ObjectVal(map[string]cty.Value{
-				"name":           cty.StringVal("a"),
-				"upstream_names": cty.NullVal(cty.Set(cty.String)),
-			}),
-			"b": cty.ObjectVal(map[string]cty.Value{
-				"1": cty.ObjectVal(map[string]cty.Value{
-					"name": cty.StringVal("b:1"),
-					"upstream_names": cty.SetVal([]cty.Value{
-						cty.StringVal("a"),
-					}),
-				}),
-				"2": cty.ObjectVal(map[string]cty.Value{
-					"name": cty.StringVal("b:2"),
-					"upstream_names": cty.SetVal([]cty.Value{
-						cty.StringVal("a"),
-					}),
-				}),
-			}),
-			"c": cty.ObjectVal(map[string]cty.Value{
-				"name": cty.StringVal("c"),
-				"upstream_names": cty.SetVal([]cty.Value{
-					cty.StringVal("a"),
-					cty.StringVal("b:1"),
-					cty.StringVal("b:2"),
-				}),
-			}),
-		}
-		if diff := cmp.Diff(gotOutputs, wantOutputs, cmpOpts); diff != "" {
-			t.Errorf("wrong output values\n%s", diff)
-		}
-
-		t.Log("(round 2 complete)")
-		reset(newState)
-	}
-
-	// Round 3: Confirm that everything is converged
-	{
-		t.Logf("--- Final plan: convergence-checking ---")
-		plan, diags := ctx.Plan(cfg, state, &PlanOpts{
-			Mode: plans.NormalMode,
-			SetVariables: InputValues{
-				"each": {
-					Value: cty.SetVal([]cty.Value{
-						cty.StringVal("1"),
-						cty.StringVal("2"),
-					}),
-					SourceType: ValueFromCaller,
-				},
-			},
-		})
-		assertNoDiagnostics(t, diags)
-		checkPlanComplete(t, plan)
-		if plan.Applyable {
-			t.Error("plan is applyable; should be non-applyable because there should be nothing left to do!")
-		}
-
-		gotPlanned := normalMap(&plannedVals)
-		wantPlanned := map[any]any{
-			// Everything gets re-planned to confirm that nothing has changed.
-			"a": cty.ObjectVal(map[string]cty.Value{
-				"name":           cty.StringVal("a"),
-				"upstream_names": cty.NullVal(cty.Set(cty.String)),
-			}),
-			"b:1": cty.ObjectVal(map[string]cty.Value{
-				"name": cty.StringVal("b:1"),
-				"upstream_names": cty.SetVal([]cty.Value{
-					cty.StringVal("a"),
-				}),
-			}),
-			"b:2": cty.ObjectVal(map[string]cty.Value{
-				"name": cty.StringVal("b:2"),
-				"upstream_names": cty.SetVal([]cty.Value{
-					cty.StringVal("a"),
-				}),
-			}),
-			"c": cty.ObjectVal(map[string]cty.Value{
-				"name": cty.StringVal("c"),
-				"upstream_names": cty.SetVal([]cty.Value{
-					cty.StringVal("a"),
-					cty.StringVal("b:1"),
-					cty.StringVal("b:2"),
-				}),
-			}),
-		}
-		if diff := cmp.Diff(wantPlanned, gotPlanned, cmpOpts); diff != "" {
-			t.Fatalf("wrong planned objects\n%s", diff)
-		}
-
-		gotActions := resourceInstancesActionsInPlan(plan)
-		wantActions := map[string]plans.Action{
-			// No changes needed
-			`test.a`:      plans.NoOp,
-			`test.b["1"]`: plans.NoOp,
-			`test.b["2"]`: plans.NoOp,
-			`test.c`:      plans.NoOp,
-		}
-		if diff := cmp.Diff(wantActions, gotActions, cmpOpts); diff != "" {
-			t.Fatalf("wrong actions in plan\n%s", diff)
-		}
-
-		t.Log("(round 3 complete: all done!)")
-	}
-}
-
 func TestContext2Apply_forget(t *testing.T) {
 	addrA := mustResourceInstanceAddr("test_object.a")
 	m := testModuleInline(t, map[string]string{
@@ -3156,6 +2676,11 @@ removed {
 	state, diags = ctx.Apply(plan, m, nil)
 	if diags.HasErrors() {
 		t.Fatalf("diags: %s", diags.Err())
+	}
+
+	// check that the provider was not asked to refresh the resource
+	if p.ReadResourceCalled {
+		t.Fatalf("Expected ReadResource not to be called, but it was called")
 	}
 
 	// check that the provider was not asked to destroy the resource
@@ -3202,6 +2727,11 @@ removed {
 	state, diags = ctx.Apply(plan, m, nil)
 	if diags.HasErrors() {
 		t.Fatalf("diags: %s", diags.Err())
+	}
+
+	// check that the provider was not asked to refresh the resource
+	if p.ReadResourceCalled {
+		t.Fatalf("Expected ReadResource not to be called, but it was called")
 	}
 
 	// check that the provider was not asked to destroy the resource
@@ -3254,11 +2784,8 @@ resource "test_resource" "a" {
 		&states.ResourceInstanceObjectSrc{
 			Status:    states.ObjectReady,
 			AttrsJSON: []byte(`{"value":"secret"}]}`),
-			AttrSensitivePaths: []cty.PathValueMarks{
-				{
-					Path:  cty.GetAttrPath("value"),
-					Marks: cty.NewValueMarks(marks.Sensitive),
-				},
+			AttrSensitivePaths: []cty.Path{
+				cty.GetAttrPath("value"),
 			},
 		},
 		mustProviderConfig(`provider["registry.terraform.io/hashicorp/test"]`),
@@ -3294,13 +2821,10 @@ resource "test_resource" "a" {
 	if diff := cmp.Diff(string(instance.Current.AttrsJSON), expected); len(diff) > 0 {
 		t.Errorf("expected:\n%s\nactual:\n%s\ndiff:\n%s", expected, string(instance.Current.AttrsJSON), diff)
 	}
-	expectedMarkses := []cty.PathValueMarks{
-		{
-			Path:  cty.GetAttrPath("value"),
-			Marks: cty.NewValueMarks(marks.Sensitive),
-		},
+	expectedSensitivePaths := []cty.Path{
+		cty.GetAttrPath("value"),
 	}
-	if diff := cmp.Diff(instance.Current.AttrSensitivePaths, expectedMarkses); len(diff) > 0 {
+	if diff := cmp.Diff(expectedSensitivePaths, instance.Current.AttrSensitivePaths, ctydebug.CmpOptions); len(diff) > 0 {
 		t.Errorf("unexpected sensitive paths\ndiff:\n%s", diff)
 	}
 }
@@ -3469,5 +2993,83 @@ resource "test_object" "obj" {
 	_, diags = ctx.Apply(plan, m, nil)
 	if len(diags) != 1 {
 		t.Fatalf("expected exactly one diagnostic, but got %d: %s", len(diags), diags)
+	}
+}
+
+// Using refresh=false when create_before_destroy disagrees between state and
+// config, should still destroy instance.
+func TestContext2Apply_35218(t *testing.T) {
+	m := testModuleInline(t, map[string]string{
+		"main.tf": `
+resource "test_instance" "obj" {
+	// was created with create_before_destroy=true
+	lifecycle {
+	//	create_before_destroy=true
+	}
+	value = "replace"
+}
+`,
+	})
+
+	p := testProvider("test")
+	p.GetProviderSchemaResponse.ServerCapabilities.PlanDestroy = true
+	p.PlanResourceChangeFn = func(req providers.PlanResourceChangeRequest) (resp providers.PlanResourceChangeResponse) {
+		if req.ProposedNewState.IsNull() {
+			// plan destroy
+			resp.PlannedState = req.ProposedNewState
+			return resp
+		}
+
+		obj := req.ProposedNewState.AsValueMap()
+		if obj["id"].IsNull() {
+			obj["id"] = cty.UnknownVal(cty.String)
+			resp.PlannedState = cty.ObjectVal(obj)
+			return resp
+		}
+
+		// plan to replace the configured instance
+		resp.PlannedState = cty.ObjectVal(obj)
+		resp.RequiresReplace = []cty.Path{cty.GetAttrPath("value")}
+		return resp
+	}
+
+	destroyCalled := false
+	p.ApplyResourceChangeFn = func(req providers.ApplyResourceChangeRequest) (resp providers.ApplyResourceChangeResponse) {
+		if req.PlannedState.IsNull() {
+			destroyCalled = true
+			resp.NewState = req.PlannedState
+			return resp
+		}
+
+		obj := req.PlannedState.AsValueMap()
+		obj["id"] = cty.StringVal("new_id")
+		resp.NewState = cty.ObjectVal(obj)
+		return resp
+	}
+
+	state := states.BuildState(func(s *states.SyncState) {
+		s.SetResourceInstanceCurrent(mustResourceInstanceAddr("test_instance.obj"), &states.ResourceInstanceObjectSrc{
+			AttrsJSON:           []byte(`{"id":"old_id"}`),
+			Status:              states.ObjectReady,
+			CreateBeforeDestroy: true,
+		}, mustProviderConfig(`provider["registry.terraform.io/hashicorp/test"]`))
+	})
+	ctx := testContext2(t, &ContextOpts{
+		Providers: map[addrs.Provider]providers.Factory{
+			addrs.NewDefaultProvider("test"): testProviderFuncFixed(p),
+		},
+	})
+
+	plan, diags := ctx.Plan(m, state, &PlanOpts{
+		SkipRefresh: true,
+		Mode:        plans.NormalMode,
+	})
+	assertNoErrors(t, diags)
+
+	_, diags = ctx.Apply(plan, m, nil)
+	assertNoErrors(t, diags)
+
+	if !destroyCalled {
+		t.Fatal("old instance not destroyed")
 	}
 }

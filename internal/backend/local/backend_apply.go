@@ -11,7 +11,7 @@ import (
 	"time"
 
 	"github.com/hashicorp/terraform/internal/addrs"
-	"github.com/hashicorp/terraform/internal/backend"
+	"github.com/hashicorp/terraform/internal/backend/backendrun"
 	"github.com/hashicorp/terraform/internal/command/views"
 	"github.com/hashicorp/terraform/internal/logging"
 	"github.com/hashicorp/terraform/internal/plans"
@@ -28,8 +28,8 @@ var testHookStopPlanApply func()
 func (b *Local) opApply(
 	stopCtx context.Context,
 	cancelCtx context.Context,
-	op *backend.Operation,
-	runningOp *backend.RunningOperation) {
+	op *backendrun.Operation,
+	runningOp *backendrun.RunningOperation) {
 	log.Printf("[INFO] backend/local: starting Apply operation")
 
 	var diags, moreDiags tfdiags.Diagnostics
@@ -64,7 +64,7 @@ func (b *Local) opApply(
 		diags := op.StateLocker.Unlock()
 		if diags.HasErrors() {
 			op.View.Diagnostics(diags)
-			runningOp.Result = backend.OperationFailure
+			runningOp.Result = backendrun.OperationFailure
 		}
 	}()
 
@@ -82,7 +82,7 @@ func (b *Local) opApply(
 	// stateHook uses schemas for when it periodically persists state to the
 	// persistent storage backend.
 	stateHook.Schemas = schemas
-	stateHook.PersistInterval = 20 * time.Second // arbitrary interval that's hopefully a sweet spot
+	stateHook.PersistInterval = time.Duration(op.StatePersistInterval) * time.Second
 
 	var plan *plans.Plan
 	// If we weren't given a plan, then we refresh/plan
@@ -122,7 +122,7 @@ func (b *Local) opApply(
 		// forced to abort, and no errors were returned from Plan.
 		if stopCtx.Err() != nil {
 			diags = diags.Append(errors.New("execution halted"))
-			runningOp.Result = backend.OperationFailure
+			runningOp.Result = backendrun.OperationFailure
 			op.ReportResult(runningOp, diags)
 			return
 		}
@@ -175,7 +175,7 @@ func (b *Local) opApply(
 			}
 			if v != "yes" {
 				op.View.Cancelled(op.PlanMode)
-				runningOp.Result = backend.OperationFailure
+				runningOp.Result = backendrun.OperationFailure
 				return
 			}
 		} else {

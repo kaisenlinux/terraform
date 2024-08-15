@@ -13,7 +13,7 @@ import (
 	"github.com/hashicorp/terraform/internal/addrs"
 	"github.com/hashicorp/terraform/internal/configs/configschema"
 	"github.com/hashicorp/terraform/internal/dag"
-	"github.com/hashicorp/terraform/internal/lang"
+	"github.com/hashicorp/terraform/internal/lang/langrefs"
 )
 
 // GraphNodeReferenceable must be implemented by any node that represents
@@ -437,17 +437,18 @@ func (m ReferenceMap) parentModuleDependsOn(g *Graph, depender graphNodeDependsO
 
 		deps, fromParentModule := m.dependsOn(g, mod)
 		for _, dep := range deps {
-			// add the dependency
-			res = append(res, dep)
-
-			// and check any transitive resource dependencies for more resources
-			ans, _ := g.Ancestors(dep)
-			for _, v := range ans {
-				if isDependableResource(v) {
-					res = append(res, v)
-				}
+			if isDependableResource(dep) {
+				res = append(res, dep)
 			}
 		}
+
+		ans, _ := g.Ancestors(deps...)
+		for _, v := range ans {
+			if isDependableResource(v) {
+				res = append(res, v)
+			}
+		}
+
 		fromModule = fromModule || fromParentModule
 	}
 
@@ -600,6 +601,6 @@ func ReferencesFromConfig(body hcl.Body, schema *configschema.Block) []*addrs.Re
 	if body == nil {
 		return nil
 	}
-	refs, _ := lang.ReferencesInBlock(addrs.ParseRef, body, schema)
+	refs, _ := langrefs.ReferencesInBlock(addrs.ParseRef, body, schema)
 	return refs
 }

@@ -13,7 +13,7 @@ import (
 	"github.com/hashicorp/terraform/internal/addrs"
 	"github.com/hashicorp/terraform/internal/collections"
 	"github.com/hashicorp/terraform/internal/configs/configschema"
-	"github.com/hashicorp/terraform/internal/lang"
+	"github.com/hashicorp/terraform/internal/instances"
 	"github.com/hashicorp/terraform/internal/lang/marks"
 	"github.com/hashicorp/terraform/internal/plans"
 	"github.com/hashicorp/terraform/internal/promising"
@@ -34,7 +34,7 @@ type ComponentInstance struct {
 
 	main *Main
 
-	repetition lang.RepetitionData
+	repetition instances.RepetitionData
 
 	moduleTreePlan promising.Once[withDiagnostics[*plans.Plan]]
 }
@@ -42,7 +42,7 @@ type ComponentInstance struct {
 var _ Plannable = (*ComponentInstance)(nil)
 var _ ExpressionScope = (*ComponentInstance)(nil)
 
-func newComponentInstance(call *Component, key addrs.InstanceKey, repetition lang.RepetitionData) *ComponentInstance {
+func newComponentInstance(call *Component, key addrs.InstanceKey, repetition instances.RepetitionData) *ComponentInstance {
 	return &ComponentInstance{
 		call:       call,
 		key:        key,
@@ -63,7 +63,7 @@ func (c *ComponentInstance) Addr() stackaddrs.AbsComponentInstance {
 	}
 }
 
-func (c *ComponentInstance) RepetitionData() lang.RepetitionData {
+func (c *ComponentInstance) RepetitionData() instances.RepetitionData {
 	return c.repetition
 }
 
@@ -558,23 +558,41 @@ func (c *ComponentInstance) CheckModuleTreePlan(ctx context.Context) (*plans.Pla
 			// If any of our upstream components have incomplete plans then
 			// we need to force treating everything in this component as
 			// deferred so we can preserve the correct dependency ordering.
-			upstreamDeferred := false
+			deferred := false
 			for _, depAddr := range c.call.RequiredComponents(ctx).Elems() {
 				depStack := c.main.Stack(ctx, depAddr.Stack, PlanPhase)
 				if depStack == nil {
-					upstreamDeferred = true // to be conservative
+					deferred = true // to be conservative
 					break
 				}
 				depComponent := depStack.Component(ctx, depAddr.Item)
 				if depComponent == nil {
-					upstreamDeferred = true // to be conservative
+					deferred = true // to be conservative
 					break
 				}
 				if !depComponent.PlanIsComplete(ctx) {
-					upstreamDeferred = true
+					deferred = true
 					break
 				}
 			}
+
+			// The instance is also upstream deferred if the for_each value for this instance is unknown.
+			if c.key == addrs.WildcardKey {
+				deferred = true
+			}
+
+			// When our given context is cancelled, we want to instruct the
+			// modules runtime to stop the running operation. We use this
+			// nested context to ensure that we don't leak a goroutine when the
+			// parent context isn't cancelled.
+			operationCtx, operationCancel := context.WithCancel(ctx)
+			defer operationCancel()
+			go func() {
+				<-operationCtx.Done()
+				if ctx.Err() == context.Canceled {
+					tfCtx.Stop()
+				}
+			}()
 
 			// NOTE: This ComponentInstance type only deals with component
 			// instances currently declared in the configuration. See
@@ -585,7 +603,8 @@ func (c *ComponentInstance) CheckModuleTreePlan(ctx context.Context) (*plans.Pla
 				Mode:                       stackPlanOpts.PlanningMode,
 				SetVariables:               inputValues,
 				ExternalProviders:          providerClients,
-				ExternalDependencyDeferred: upstreamDeferred,
+				DeferralAllowed:            stackPlanOpts.DeferralAllowed,
+				ExternalDependencyDeferred: deferred,
 
 				// This is set by some tests but should not be used in main code.
 				// (nil means to use the real time when tfCtx.Plan was called.)
@@ -798,6 +817,19 @@ func (c *ComponentInstance) ApplyModuleTreePlan(ctx context.Context, plan *plans
 
 	var newState *states.State
 	if modifiedPlan.Applyable {
+		// When our given context is cancelled, we want to instruct the
+		// modules runtime to stop the running operation. We use this
+		// nested context to ensure that we don't leak a goroutine when the
+		// parent context isn't cancelled.
+		operationCtx, operationCancel := context.WithCancel(ctx)
+		defer operationCancel()
+		go func() {
+			<-operationCtx.Done()
+			if ctx.Err() == context.Canceled {
+				tfCtx.Stop()
+			}
+		}()
+
 		// NOTE: tfCtx.Apply tends to make changes to the given plan while it
 		// works, and so code after this point should not make any further use
 		// of either "modifiedPlan" or "plan" (since they share lots of the same
@@ -989,6 +1021,12 @@ func (c *ComponentInstance) ResultValue(ctx context.Context, phase EvalPhase) ct
 		if plan.UIMode != plans.DestroyMode {
 			outputChanges := plan.Changes.Outputs
 			for _, changeSrc := range outputChanges {
+				if len(changeSrc.Addr.Module) > 0 {
+					// Only include output values of the root module as part
+					// of the component.
+					continue
+				}
+
 				name := changeSrc.Addr.OutputValue.Name
 				change, err := changeSrc.Decode()
 				if err != nil {
@@ -1481,4 +1519,9 @@ func (c *ComponentInstance) resourceTypeSchema(ctx context.Context, providerType
 
 func (c *ComponentInstance) tracingName() string {
 	return c.Addr().String()
+}
+
+// reportNamedPromises implements namedPromiseReporter.
+func (c *ComponentInstance) reportNamedPromises(cb func(id promising.PromiseID, name string)) {
+	cb(c.moduleTreePlan.PromiseID(), c.Addr().String()+" plan")
 }

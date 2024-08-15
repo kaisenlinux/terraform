@@ -11,7 +11,7 @@ import (
 
 	"github.com/hashicorp/terraform/internal/addrs"
 	"github.com/hashicorp/terraform/internal/collections"
-	"github.com/hashicorp/terraform/internal/lang"
+	"github.com/hashicorp/terraform/internal/instances"
 	"github.com/hashicorp/terraform/internal/promising"
 	"github.com/hashicorp/terraform/internal/stacks/stackaddrs"
 	"github.com/hashicorp/terraform/internal/stacks/stackconfig"
@@ -179,9 +179,9 @@ func (p *Provider) CheckInstances(ctx context.Context, phase EvalPhase) (map[add
 		func(ctx context.Context) (map[addrs.InstanceKey]*ProviderInstance, tfdiags.Diagnostics) {
 			var diags tfdiags.Diagnostics
 			forEachVal := p.ForEachValue(ctx, phase)
-			return instancesMap(forEachVal, func(ik addrs.InstanceKey, rd lang.RepetitionData) *ProviderInstance {
+			return instancesMap(forEachVal, func(ik addrs.InstanceKey, rd instances.RepetitionData) *ProviderInstance {
 				return newProviderInstance(p, ik, rd)
-			}), diags
+			}, false), diags
 		},
 	)
 }
@@ -272,4 +272,25 @@ func (p *Provider) CheckApply(ctx context.Context) ([]stackstate.AppliedChange, 
 // tracingName implements Plannable.
 func (p *Provider) tracingName() string {
 	return p.Addr().String()
+}
+
+// reportNamedPromises implements namedPromiseReporter.
+func (p *Provider) reportNamedPromises(cb func(id promising.PromiseID, name string)) {
+	name := p.Addr().String()
+	forEachName := name + " for_each"
+	instsName := name + " instances"
+	p.forEachValue.Each(func(ep EvalPhase, o *promising.Once[withDiagnostics[cty.Value]]) {
+		cb(o.PromiseID(), forEachName)
+	})
+	p.instances.Each(func(ep EvalPhase, o *promising.Once[withDiagnostics[map[addrs.InstanceKey]*ProviderInstance]]) {
+		cb(o.PromiseID(), instsName)
+	})
+	// FIXME: We should call reportNamedPromises on the individual
+	// ProviderInstance objects too, but promising.Once doesn't allow us
+	// to peek to see if the Once was already resolved without blocking on
+	// it, and we don't want to block on any promises in here.
+	// Without this, any promises belonging to the individual instances will
+	// not be named in a self-dependency error report, but since references
+	// to provider instances are always indirect through the provider this
+	// shouldn't be a big deal in most cases.
 }

@@ -11,8 +11,7 @@ import (
 	"github.com/hashicorp/terraform/internal/configs"
 	"github.com/hashicorp/terraform/internal/configs/configschema"
 	"github.com/hashicorp/terraform/internal/dag"
-	"github.com/hashicorp/terraform/internal/experiments"
-	"github.com/hashicorp/terraform/internal/lang"
+	"github.com/hashicorp/terraform/internal/lang/langrefs"
 	"github.com/hashicorp/terraform/internal/states"
 	"github.com/hashicorp/terraform/internal/tfdiags"
 )
@@ -56,7 +55,11 @@ type NodeAbstractResource struct {
 
 	Schema        *configschema.Block // Schema for processing the configuration body
 	SchemaVersion uint64              // Schema version of "Schema", as decided by the provider
-	Config        *configs.Resource   // Config is the resource in the config
+
+	// Config and RemovedConfig are mutally-exclusive, because a
+	// resource can't be both declared and removed at the same time.
+	Config        *configs.Resource // Config is the resource in the config, if any
+	RemovedConfig *configs.Removed  // RemovedConfig is the "removed" block for this resource, if any
 
 	// ProviderMetas is the provider_meta configs for the module this resource belongs to
 	ProviderMetas map[addrs.Provider]*configs.ProviderMeta
@@ -83,13 +86,6 @@ type NodeAbstractResource struct {
 	// generateConfigPath tells this node which file to write generated config
 	// into. If empty, then config should not be generated.
 	generateConfigPath string
-
-	// TEMP: [ConfigTransformer] sets this to true when at least one module
-	// in the configuration has opted in to the unknown_instances experiment.
-	// See the field of the same name in [ConfigTransformer] for more details.
-	// (And if that field has been removed already, then this one should've
-	// been too!)
-	unknownInstancesExperimentEnabled bool
 }
 
 var (
@@ -161,25 +157,25 @@ func (n *NodeAbstractResource) References() []*addrs.Reference {
 			log.Printf("[WARN] no schema is attached to %s, so config references cannot be detected", n.Name())
 		}
 
-		refs, _ := lang.ReferencesInExpr(addrs.ParseRef, c.Count)
+		refs, _ := langrefs.ReferencesInExpr(addrs.ParseRef, c.Count)
 		result = append(result, refs...)
-		refs, _ = lang.ReferencesInExpr(addrs.ParseRef, c.ForEach)
+		refs, _ = langrefs.ReferencesInExpr(addrs.ParseRef, c.ForEach)
 		result = append(result, refs...)
 
 		for _, expr := range c.TriggersReplacement {
-			refs, _ = lang.ReferencesInExpr(addrs.ParseRef, expr)
+			refs, _ = langrefs.ReferencesInExpr(addrs.ParseRef, expr)
 			result = append(result, refs...)
 		}
 
 		// ReferencesInBlock() requires a schema
 		if n.Schema != nil {
-			refs, _ = lang.ReferencesInBlock(addrs.ParseRef, c.Config, n.Schema)
+			refs, _ = langrefs.ReferencesInBlock(addrs.ParseRef, c.Config, n.Schema)
 			result = append(result, refs...)
 		}
 
 		if c.Managed != nil {
 			if c.Managed.Connection != nil {
-				refs, _ = lang.ReferencesInBlock(addrs.ParseRef, c.Managed.Connection.Config, connectionBlockSupersetSchema)
+				refs, _ = langrefs.ReferencesInBlock(addrs.ParseRef, c.Managed.Connection.Config, connectionBlockSupersetSchema)
 				result = append(result, refs...)
 			}
 
@@ -188,7 +184,7 @@ func (n *NodeAbstractResource) References() []*addrs.Reference {
 					continue
 				}
 				if p.Connection != nil {
-					refs, _ = lang.ReferencesInBlock(addrs.ParseRef, p.Connection.Config, connectionBlockSupersetSchema)
+					refs, _ = langrefs.ReferencesInBlock(addrs.ParseRef, p.Connection.Config, connectionBlockSupersetSchema)
 					result = append(result, refs...)
 				}
 
@@ -196,21 +192,21 @@ func (n *NodeAbstractResource) References() []*addrs.Reference {
 				if schema == nil {
 					log.Printf("[WARN] no schema for provisioner %q is attached to %s, so provisioner block references cannot be detected", p.Type, n.Name())
 				}
-				refs, _ = lang.ReferencesInBlock(addrs.ParseRef, p.Config, schema)
+				refs, _ = langrefs.ReferencesInBlock(addrs.ParseRef, p.Config, schema)
 				result = append(result, refs...)
 			}
 		}
 
 		for _, check := range c.Preconditions {
-			refs, _ := lang.ReferencesInExpr(addrs.ParseRef, check.Condition)
+			refs, _ := langrefs.ReferencesInExpr(addrs.ParseRef, check.Condition)
 			result = append(result, refs...)
-			refs, _ = lang.ReferencesInExpr(addrs.ParseRef, check.ErrorMessage)
+			refs, _ = langrefs.ReferencesInExpr(addrs.ParseRef, check.ErrorMessage)
 			result = append(result, refs...)
 		}
 		for _, check := range c.Postconditions {
-			refs, _ := lang.ReferencesInExpr(addrs.ParseRef, check.Condition)
+			refs, _ := langrefs.ReferencesInExpr(addrs.ParseRef, check.Condition)
 			result = append(result, refs...)
-			refs, _ = lang.ReferencesInExpr(addrs.ParseRef, check.ErrorMessage)
+			refs, _ = langrefs.ReferencesInExpr(addrs.ParseRef, check.ErrorMessage)
 			result = append(result, refs...)
 		}
 	}
@@ -226,9 +222,9 @@ func (n *NodeAbstractResource) ImportReferences() []*addrs.Reference {
 			continue
 		}
 
-		refs, _ := lang.ReferencesInExpr(addrs.ParseRef, importTarget.Config.ID)
+		refs, _ := langrefs.ReferencesInExpr(addrs.ParseRef, importTarget.Config.ID)
 		result = append(result, refs...)
-		refs, _ = lang.ReferencesInExpr(addrs.ParseRef, importTarget.Config.ForEach)
+		refs, _ = langrefs.ReferencesInExpr(addrs.ParseRef, importTarget.Config.ForEach)
 		result = append(result, refs...)
 	}
 	return result
@@ -367,8 +363,9 @@ func (n *NodeAbstractResource) AttachDataResourceDependsOn(deps []addrs.ConfigRe
 }
 
 // GraphNodeAttachResourceConfig
-func (n *NodeAbstractResource) AttachResourceConfig(c *configs.Resource) {
+func (n *NodeAbstractResource) AttachResourceConfig(c *configs.Resource, rc *configs.Removed) {
 	n.Config = c
+	n.RemovedConfig = rc
 }
 
 // GraphNodeAttachResourceSchema impl
@@ -410,14 +407,12 @@ func (n *NodeAbstractResource) writeResourceState(ctx EvalContext, addr addrs.Ab
 	// to expand the module here to create all resources.
 	expander := ctx.InstanceExpander()
 
-	// Allowing unknown values in count and for_each is currently only an
-	// experimental feature. This will hopefully become the default (and only)
-	// behavior in future, if the experiment is successful.
+	// Allowing unknown values in count and for_each is a top-level plan option.
 	//
 	// If this is false then the codepaths that handle unknown values below
 	// become unreachable, because the evaluate functions will reject unknown
 	// values as an error.
-	allowUnknown := ctx.LanguageExperimentActive(experiments.UnknownInstances)
+	allowUnknown := ctx.Deferrals().DeferralAllowed()
 
 	switch {
 	case n.Config != nil && n.Config.Count != nil:

@@ -16,7 +16,7 @@ import (
 	"github.com/hashicorp/terraform/internal/addrs"
 	fileProvisioner "github.com/hashicorp/terraform/internal/builtin/provisioners/file"
 	remoteExecProvisioner "github.com/hashicorp/terraform/internal/builtin/provisioners/remote-exec"
-	"github.com/hashicorp/terraform/internal/lang"
+	"github.com/hashicorp/terraform/internal/instances"
 	"github.com/hashicorp/terraform/internal/promising"
 	"github.com/hashicorp/terraform/internal/provisioners"
 	"github.com/hashicorp/terraform/internal/stacks/stackaddrs"
@@ -413,7 +413,7 @@ func (m *Main) ProviderInstance(ctx context.Context, addr stackaddrs.AbsProvider
 		// so we must optimistically return an instance referring to the
 		// given address which will then presumably yield unknown values
 		// of some kind when used.
-		return newProviderInstance(provider, addr.Item.Key, lang.RepetitionData{
+		return newProviderInstance(provider, addr.Item.Key, instances.RepetitionData{
 			EachKey:   cty.UnknownVal(cty.String),
 			EachValue: cty.DynamicVal,
 		})
@@ -442,6 +442,10 @@ func (m *Main) PreviousProviderInstances(addr stackaddrs.AbsComponentInstance, p
 	}
 }
 
+// RootVariableValue returns the original root variable value specified by the
+// caller, if any. The caller of this function is responsible for replacing
+// missing values with defaults, and performing type conversion and and
+// validation.
 func (m *Main) RootVariableValue(ctx context.Context, addr stackaddrs.InputVariable, phase EvalPhase) ExternalInputValue {
 	switch phase {
 	case PlanPhase:
@@ -450,6 +454,10 @@ func (m *Main) RootVariableValue(ctx context.Context, addr stackaddrs.InputVaria
 		}
 		ret, ok := m.planning.opts.InputVariableValues[addr]
 		if !ok {
+			// If no value is specified for the given input variable, we return
+			// a null value. Callers should treat a null value as equivalent to
+			// an unspecified one, applying default (if present) or raising an
+			// error (if not).
 			return ExternalInputValue{
 				Value: cty.NullVal(cty.DynamicPseudoType),
 			}
@@ -587,6 +595,12 @@ func (m *Main) reportNamedPromises(cb func(id promising.PromiseID, name string))
 	defer m.mu.Unlock()
 	if m.mainStackConfig != nil {
 		m.mainStackConfig.reportNamedPromises(cb)
+	}
+	if m.mainStack != nil {
+		m.mainStack.reportNamedPromises(cb)
+	}
+	for _, pty := range m.providerTypes {
+		pty.reportNamedPromises(cb)
 	}
 }
 

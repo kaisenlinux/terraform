@@ -8,12 +8,11 @@ import (
 	"fmt"
 
 	"github.com/hashicorp/hcl/v2"
-	"github.com/zclconf/go-cty/cty"
-
 	"github.com/hashicorp/terraform/internal/addrs"
-	"github.com/hashicorp/terraform/internal/lang"
+	"github.com/hashicorp/terraform/internal/instances"
 	"github.com/hashicorp/terraform/internal/lang/marks"
 	"github.com/hashicorp/terraform/internal/tfdiags"
+	"github.com/zclconf/go-cty/cty"
 )
 
 // evaluateForEachExpr deals with all of the for_each evaluation concerns
@@ -70,19 +69,15 @@ func evaluateForEachExpr(ctx context.Context, expr hcl.Expression, phase EvalPha
 	case ty.IsObjectType() || ty.IsMapType():
 		// okay
 
-	case !result.Value.IsKnown():
-		// we can't validate further without knowing the value
-		return result, diags
-
 	case ty.IsSetType():
-		if markSafeLengthInt(result.Value) == 0 {
-			// we are okay with an empty set
-			return result, diags
-		}
-
 		// since we can't use a set values that are unknown, we treat the
 		// entire set as unknown
 		if !result.Value.IsWhollyKnown() {
+			return result, diags
+		}
+
+		if markSafeLengthInt(result.Value) == 0 {
+			// we are okay with an empty set
 			return result, diags
 		}
 
@@ -111,6 +106,12 @@ func evaluateForEachExpr(ctx context.Context, expr hcl.Expression, phase EvalPha
 				})
 			}
 		}
+
+	case !result.Value.IsWhollyKnown() && ty.HasDynamicTypes():
+		// If the value is unknown and has dynamic types, we can't
+		// determine if it's a valid for_each value, so we'll just
+		// return the unknown value.
+		return result, diags
 
 	default:
 		diags = diags.Append(&hcl.Diagnostic{
@@ -146,19 +147,20 @@ func evaluateForEachExpr(ctx context.Context, expr hcl.Expression, phase EvalPha
 // If maybeForEach value is non-nil but not a valid value produced by
 // [evaluateForEachExpr] then the behavior is unpredictable, including the
 // possibility of a panic.
-func instancesMap[T any](maybeForEachVal cty.Value, makeInst func(addrs.InstanceKey, lang.RepetitionData) T) map[addrs.InstanceKey]T {
+func instancesMap[T any](maybeForEachVal cty.Value, makeInst func(addrs.InstanceKey, instances.RepetitionData) T, allowsUnknown bool) map[addrs.InstanceKey]T {
 	switch {
-
 	case maybeForEachVal == cty.NilVal:
 		// No for_each expression at all, then. We have exactly one instance
 		// without an instance key and with no repetition data.
 		return noForEachInstancesMap(makeInst)
 
 	case !maybeForEachVal.IsKnown():
-		// The for_each expression is too invalid for us to be able to
-		// know which instances exist. A totally nil map (as opposed to a
-		// non-nil map of length zero) signals that situation.
-		return nil
+		// This is temporary to gradually rollout support for unknown for_each values
+		if allowsUnknown {
+			return unknownForEachInstancesMap(maybeForEachVal.Type(), makeInst)
+		} else {
+			return nil
+		}
 
 	default:
 		// Otherwise we should be able to assume the value is valid per the
@@ -188,7 +190,7 @@ func instancesMap[T any](maybeForEachVal cty.Value, makeInst func(addrs.Instance
 //
 // This function is only designed to deal with valid (non-error) results from
 // [evaluateForEachExpr] and so might panic if given other values.
-func forEachInstancesMap[T any](forEachVal cty.Value, makeInst func(addrs.InstanceKey, lang.RepetitionData) T) map[addrs.InstanceKey]T {
+func forEachInstancesMap[T any](forEachVal cty.Value, makeInst func(addrs.InstanceKey, instances.RepetitionData) T) map[addrs.InstanceKey]T {
 	ty := forEachVal.Type()
 	switch {
 	case ty.IsObjectType() || ty.IsMapType():
@@ -196,7 +198,7 @@ func forEachInstancesMap[T any](forEachVal cty.Value, makeInst func(addrs.Instan
 		ret := make(map[addrs.InstanceKey]T, len(elems))
 		for k, v := range elems {
 			ik := addrs.StringKey(k)
-			ret[ik] = makeInst(ik, lang.RepetitionData{
+			ret[ik] = makeInst(ik, instances.RepetitionData{
 				EachKey:   cty.StringVal(k),
 				EachValue: v,
 			})
@@ -220,7 +222,7 @@ func forEachInstancesMap[T any](forEachVal cty.Value, makeInst func(addrs.Instan
 		ret := make(map[addrs.InstanceKey]T, len(elems))
 		for _, sv := range elems {
 			k := addrs.StringKey(sv.AsString())
-			ret[k] = makeInst(k, lang.RepetitionData{
+			ret[k] = makeInst(k, instances.RepetitionData{
 				EachKey:   sv,
 				EachValue: sv,
 			})
@@ -232,11 +234,17 @@ func forEachInstancesMap[T any](forEachVal cty.Value, makeInst func(addrs.Instan
 	}
 }
 
-func noForEachInstancesMap[T any](makeInst func(addrs.InstanceKey, lang.RepetitionData) T) map[addrs.InstanceKey]T {
+func noForEachInstancesMap[T any](makeInst func(addrs.InstanceKey, instances.RepetitionData) T) map[addrs.InstanceKey]T {
 	return map[addrs.InstanceKey]T{
-		addrs.NoKey: makeInst(addrs.NoKey, lang.RepetitionData{
+		addrs.NoKey: makeInst(addrs.NoKey, instances.RepetitionData{
 			// no repetition symbols available in this case
 		}),
+	}
+}
+
+func unknownForEachInstancesMap[T any](ty cty.Type, makeInst func(addrs.InstanceKey, instances.RepetitionData) T) map[addrs.InstanceKey]T {
+	return map[addrs.InstanceKey]T{
+		addrs.WildcardKey: makeInst(addrs.WildcardKey, instances.UnknownForEachRepetitionData(ty)),
 	}
 }
 

@@ -12,7 +12,9 @@ import (
 
 	"github.com/hashicorp/terraform/internal/addrs"
 	"github.com/hashicorp/terraform/internal/configs"
-	"github.com/hashicorp/terraform/internal/lang"
+	"github.com/hashicorp/terraform/internal/instances"
+	"github.com/hashicorp/terraform/internal/lang/marks"
+	"github.com/hashicorp/terraform/internal/plans"
 	"github.com/hashicorp/terraform/internal/plans/objchange"
 	"github.com/hashicorp/terraform/internal/providers"
 	"github.com/hashicorp/terraform/internal/tfdiags"
@@ -85,13 +87,15 @@ func (n *nodePlannablePartialExpandedResource) Execute(ctx EvalContext, op walkO
 	//
 	log.Printf("[TRACE] nodePlannablePartialExpandedResource: checking all of %s", n.addr.String())
 
-	var placeholderVal cty.Value
 	var diags tfdiags.Diagnostics
 	switch n.addr.Resource().Mode {
 	case addrs.ManagedResourceMode:
-		placeholderVal, diags = n.managedResourceExecute(ctx)
+		change, changeDiags := n.managedResourceExecute(ctx)
+		diags = diags.Append(changeDiags)
+		ctx.Deferrals().ReportResourceExpansionDeferred(n.addr, change)
 	case addrs.DataResourceMode:
-		placeholderVal, diags = n.dataResourceExecute(ctx)
+		_, diags = n.dataResourceExecute(ctx)
+		ctx.Deferrals().ReportDataSourceExpansionDeferred(n.addr)
 	default:
 		panic(fmt.Errorf("unsupported resource mode %s", n.config.Mode))
 	}
@@ -99,11 +103,10 @@ func (n *nodePlannablePartialExpandedResource) Execute(ctx EvalContext, op walkO
 	// Registering this allows downstream resources that depend on this one
 	// to know that they need to defer themselves too, in order to preserve
 	// correct dependency order.
-	ctx.Deferrals().ReportResourceExpansionDeferred(n.addr, placeholderVal)
 	return diags
 }
 
-func (n *nodePlannablePartialExpandedResource) managedResourceExecute(ctx EvalContext) (cty.Value, tfdiags.Diagnostics) {
+func (n *nodePlannablePartialExpandedResource) managedResourceExecute(ctx EvalContext) (*plans.ResourceInstanceChange, tfdiags.Diagnostics) {
 	var diags tfdiags.Diagnostics
 
 	// We cannot fully plan partial-expanded resources because we don't know
@@ -114,22 +117,36 @@ func (n *nodePlannablePartialExpandedResource) managedResourceExecute(ctx EvalCo
 	// to shorten the iterative journey, so nothing here actually contributes
 	// new actions to the plan.
 
+	// We'll make a basic change for us to use as a placeholder for the time
+	// being, and we'll populate it as we get more info.
+	change := plans.ResourceInstanceChange{
+		Addr:         n.addr.UnknownResourceInstance(),
+		ProviderAddr: n.resolvedProvider,
+		Change: plans.Change{
+			// We don't actually know the action, but we simulate the plan later
+			// as a create action so we'll use that here too.
+			Action: plans.Create,
+			Before: cty.NullVal(cty.DynamicPseudoType),
+			After:  cty.DynamicVal, // This will be populated later
+		},
+	}
+
 	provider, providerSchema, err := getProvider(ctx, n.resolvedProvider)
 	diags = diags.Append(err)
 	if diags.HasErrors() {
-		return cty.DynamicVal, diags
+		return &change, diags
 	}
 
 	diags = diags.Append(validateSelfRef(n.addr.Resource(), n.config.Config, providerSchema))
 	if diags.HasErrors() {
-		return cty.DynamicVal, diags
+		return &change, diags
 	}
 
 	schema, _ := providerSchema.SchemaForResourceAddr(n.addr.Resource())
 	if schema == nil {
 		// Should be caught during validation, so we don't bother with a pretty error here
 		diags = diags.Append(fmt.Errorf("provider does not support resource type %q", n.addr.Resource().Type))
-		return cty.DynamicVal, diags
+		return &change, diags
 	}
 
 	// TODO: Normal managed resource planning
@@ -149,27 +166,27 @@ func (n *nodePlannablePartialExpandedResource) managedResourceExecute(ctx EvalCo
 		// not really anything else to do here, since we can only refresh
 		// specific known resource instances (which another graph node should
 		// handle), so we'll just return early.
-		return cty.DynamicVal, diags
+		return &change, diags
 	}
 
 	// Because we don't know the instance keys yet, we'll be evaluating using
 	// suitable unknown values for count.index, each.key, and each.value
 	// so that anything that varies between the instances will be unknown
 	// but we can still check the arguments that they all have in common.
-	var keyData lang.RepetitionData
+	var keyData instances.RepetitionData
 	switch {
 	case n.config.ForEach != nil:
 		// We don't actually know the `for_each` type here, but we do at least
 		// know it's for_each.
-		keyData = lang.UnknownForEachRepetitionData(cty.DynamicPseudoType)
+		keyData = instances.UnknownForEachRepetitionData(cty.DynamicPseudoType)
 	case n.config.Count != nil:
-		keyData = lang.UnknownCountRepetitionData
+		keyData = instances.UnknownCountRepetitionData
 	default:
 		// If we get here then we're presumably a single-instance resource
 		// inside a multi-instance module whose instances aren't known yet,
 		// and so we'll evaluate without any of the repetition symbols to
 		// still generate the usual errors if someone tries to use them here.
-		keyData = lang.RepetitionData{
+		keyData = instances.RepetitionData{
 			CountIndex: cty.NilVal,
 			EachKey:    cty.NilVal,
 			EachValue:  cty.NilVal,
@@ -179,7 +196,7 @@ func (n *nodePlannablePartialExpandedResource) managedResourceExecute(ctx EvalCo
 	configVal, _, configDiags := ctx.EvaluateBlock(n.config.Config, schema, nil, keyData)
 	diags = diags.Append(configDiags)
 	if configDiags.HasErrors() {
-		return cty.DynamicVal, diags
+		return &change, diags
 	}
 
 	unmarkedConfigVal, _ := configVal.UnmarkDeep()
@@ -191,7 +208,7 @@ func (n *nodePlannablePartialExpandedResource) managedResourceExecute(ctx EvalCo
 	)
 	diags = diags.Append(validateResp.Diagnostics.InConfigBody(n.config.Config, n.addr.String()))
 	if diags.HasErrors() {
-		return cty.DynamicVal, diags
+		return &change, diags
 	}
 
 	unmarkedConfigVal, unmarkedPaths := configVal.UnmarkDeepWithPaths()
@@ -217,7 +234,7 @@ func (n *nodePlannablePartialExpandedResource) managedResourceExecute(ctx EvalCo
 	})
 	diags = diags.Append(resp.Diagnostics.InConfigBody(n.config.Config, n.addr.String()))
 	if diags.HasErrors() {
-		return cty.DynamicVal, diags
+		return &change, diags
 	}
 
 	plannedNewVal := resp.PlannedState
@@ -239,7 +256,7 @@ func (n *nodePlannablePartialExpandedResource) managedResourceExecute(ctx EvalCo
 		))
 	}
 	if diags.HasErrors() {
-		return cty.DynamicVal, diags
+		return &change, diags
 	}
 
 	if errs := objchange.AssertPlanValid(schema, priorVal, unmarkedConfigVal, plannedNewVal); len(errs) > 0 {
@@ -269,18 +286,20 @@ func (n *nodePlannablePartialExpandedResource) managedResourceExecute(ctx EvalCo
 					),
 				))
 			}
-			return cty.DynamicVal, diags
+			return &change, diags
 		}
 	}
 
 	// We need to combine the dynamic marks with the static marks implied by
 	// the provider's schema.
-	unmarkedPaths = append(unmarkedPaths, schema.ValueMarks(plannedNewVal, nil)...)
-	if len(unmarkedPaths) > 0 {
-		plannedNewVal = plannedNewVal.MarkWithPaths(unmarkedPaths)
+	plannedNewVal = plannedNewVal.MarkWithPaths(unmarkedPaths)
+	if sensitivePaths := schema.SensitivePaths(plannedNewVal, nil); len(sensitivePaths) != 0 {
+		plannedNewVal = marks.MarkPaths(plannedNewVal, marks.Sensitive, sensitivePaths)
 	}
 
-	return plannedNewVal, diags
+	change.After = plannedNewVal
+	change.Private = resp.PlannedPrivate
+	return &change, diags
 }
 
 func (n *nodePlannablePartialExpandedResource) dataResourceExecute(ctx EvalContext) (cty.Value, tfdiags.Diagnostics) {

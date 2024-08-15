@@ -11,7 +11,7 @@ import (
 
 	"github.com/hashicorp/terraform/internal/addrs"
 	"github.com/hashicorp/terraform/internal/collections"
-	"github.com/hashicorp/terraform/internal/lang"
+	"github.com/hashicorp/terraform/internal/instances"
 	"github.com/hashicorp/terraform/internal/promising"
 	"github.com/hashicorp/terraform/internal/stacks/stackaddrs"
 	"github.com/hashicorp/terraform/internal/stacks/stackconfig"
@@ -116,17 +116,6 @@ func (c *Component) CheckForEachValue(ctx context.Context, phase EvalPhase) (cty
 					return cty.DynamicVal, diags
 				}
 
-				if !result.Value.IsKnown() {
-					// FIXME: We should somehow allow this and emit a
-					// "deferred change" representing all of the as-yet-unknown
-					// instances of this call and everything beneath it.
-					diags = diags.Append(result.Diagnostic(
-						tfdiags.Error,
-						"Invalid for_each value",
-						"The for_each value must not be derived from values that will be determined only during the apply phase.",
-					))
-				}
-
 				return result.Value, diags
 
 			default:
@@ -170,11 +159,16 @@ func (c *Component) CheckInstances(ctx context.Context, phase EvalPhase) (map[ad
 		ctx, c.instances.For(phase), c.main,
 		func(ctx context.Context) (map[addrs.InstanceKey]*ComponentInstance, tfdiags.Diagnostics) {
 			var diags tfdiags.Diagnostics
-			forEachVal := c.ForEachValue(ctx, phase)
+			forEachVal, forEachValueDiags := c.CheckForEachValue(ctx, phase)
 
-			ret := instancesMap(forEachVal, func(ik addrs.InstanceKey, rd lang.RepetitionData) *ComponentInstance {
+			diags = diags.Append(forEachValueDiags)
+			if diags.HasErrors() {
+				return nil, diags
+			}
+
+			ret := instancesMap(forEachVal, func(ik addrs.InstanceKey, rd instances.RepetitionData) *ComponentInstance {
 				return newComponentInstance(c, ik, rd)
-			})
+			}, true)
 
 			addrs := make([]stackaddrs.AbsComponentInstance, 0, len(ret))
 			for _, ci := range ret {
@@ -257,6 +251,12 @@ func (c *Component) PlanIsComplete(ctx context.Context) bool {
 		return false
 	}
 
+	if insts[addrs.WildcardKey] != nil {
+		// If the wildcard key is used the instance originates from an unknown
+		// for_each value, which means the result is unknown.
+		return false
+	}
+
 	for _, inst := range insts {
 		plan := inst.ModuleTreePlan(ctx)
 		if plan == nil {
@@ -266,6 +266,7 @@ func (c *Component) PlanIsComplete(ctx context.Context) bool {
 			// get returned by a different return path.
 			return false
 		}
+
 		if !plan.Complete {
 			return false
 		}
@@ -283,9 +284,7 @@ func (c *Component) ExprReferenceValue(ctx context.Context, phase EvalPhase) cty
 func (c *Component) checkValid(ctx context.Context, phase EvalPhase) tfdiags.Diagnostics {
 	var diags tfdiags.Diagnostics
 
-	_, moreDiags := c.CheckForEachValue(ctx, phase)
-	diags = diags.Append(moreDiags)
-	_, moreDiags = c.CheckInstances(ctx, phase)
+	_, moreDiags := c.CheckInstances(ctx, phase)
 	diags = diags.Append(moreDiags)
 
 	return diags
@@ -347,4 +346,25 @@ func (c *Component) ApplySuccessful(ctx context.Context) bool {
 
 func (c *Component) tracingName() string {
 	return c.Addr().String()
+}
+
+// reportNamedPromises implements namedPromiseReporter.
+func (c *Component) reportNamedPromises(cb func(id promising.PromiseID, name string)) {
+	name := c.Addr().String()
+	instsName := name + " instances"
+	forEachName := name + " for_each"
+	c.instances.Each(func(ep EvalPhase, o *promising.Once[withDiagnostics[map[addrs.InstanceKey]*ComponentInstance]]) {
+		cb(o.PromiseID(), instsName)
+	})
+	// FIXME: We should call reportNamedPromises on the individual
+	// ComponentInstance objects too, but promising.Once doesn't allow us
+	// to peek to see if the Once was already resolved without blocking on
+	// it, and we don't want to block on any promises in here.
+	// Without this, any promises belonging to the individual instances will
+	// not be named in a self-dependency error report, but since references
+	// to component instances are always indirect through the component this
+	// shouldn't be a big deal in most cases.
+	c.forEachValue.Each(func(ep EvalPhase, o *promising.Once[withDiagnostics[cty.Value]]) {
+		cb(o.PromiseID(), forEachName)
+	})
 }

@@ -9,7 +9,7 @@ import (
 
 	"github.com/hashicorp/terraform/internal/addrs"
 	"github.com/hashicorp/terraform/internal/configs"
-	"github.com/hashicorp/terraform/internal/lang"
+	"github.com/hashicorp/terraform/internal/instances"
 	"github.com/hashicorp/terraform/internal/plans"
 	"github.com/hashicorp/terraform/internal/plans/objchange"
 	"github.com/hashicorp/terraform/internal/providers"
@@ -275,9 +275,20 @@ func (n *NodeApplyableResourceInstance) managedResourceExecute(ctx EvalContext) 
 
 	// Make a new diff, in case we've learned new values in the state
 	// during apply which we can now incorporate.
-	diffApply, _, repeatData, planDiags := n.plan(ctx, diff, state, false, n.forceReplace)
+	diffApply, _, deferred, repeatData, planDiags := n.plan(ctx, diff, state, false, n.forceReplace)
 	diags = diags.Append(planDiags)
 	if diags.HasErrors() {
+		return diags
+	}
+
+	if deferred != nil {
+		diags = diags.Append(tfdiags.Sourceless(
+			tfdiags.Error,
+			"Resource deferred during apply, but not during plan",
+			fmt.Sprintf(
+				"Terraform has encountered a bug where a provider would mark the resource %q as deferred during apply, but not during plan. This is most likely a bug in the provider. Please file an issue with the provider.", n.Addr,
+			),
+		))
 		return diags
 	}
 
@@ -384,7 +395,7 @@ func (n *NodeApplyableResourceInstance) managedResourceExecute(ctx EvalContext) 
 	return diags.Append(n.managedResourcePostconditions(ctx, repeatData))
 }
 
-func (n *NodeApplyableResourceInstance) managedResourcePostconditions(ctx EvalContext, repeatData lang.RepetitionData) (diags tfdiags.Diagnostics) {
+func (n *NodeApplyableResourceInstance) managedResourcePostconditions(ctx EvalContext, repeatData instances.RepetitionData) (diags tfdiags.Diagnostics) {
 
 	checkDiags := evalCheckRules(
 		addrs.ResourcePostcondition,

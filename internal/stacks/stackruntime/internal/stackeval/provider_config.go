@@ -13,7 +13,7 @@ import (
 	"github.com/zclconf/go-cty/cty"
 
 	"github.com/hashicorp/terraform/internal/addrs"
-	"github.com/hashicorp/terraform/internal/lang"
+	"github.com/hashicorp/terraform/internal/instances"
 	"github.com/hashicorp/terraform/internal/promising"
 	"github.com/hashicorp/terraform/internal/providers"
 	"github.com/hashicorp/terraform/internal/stacks/stackaddrs"
@@ -149,7 +149,7 @@ func (p *ProviderConfig) CheckProviderArgs(ctx context.Context, phase EvalPhase)
 // of validating the static provider configuration before it has been expanded
 // into multiple instances.
 func (p *ProviderConfig) ResolveExpressionReference(ctx context.Context, ref stackaddrs.Reference) (Referenceable, tfdiags.Diagnostics) {
-	repetition := lang.RepetitionData{}
+	repetition := instances.RepetitionData{}
 	if p.Declaration(ctx).ForEach != nil {
 		// We're producing an approximation across all eventual instances
 		// of this call, so we'll set each.key and each.value to unknown
@@ -223,4 +223,9 @@ func (p *ProviderConfig) PlanChanges(ctx context.Context) ([]stackplan.PlannedCh
 // tracingName implements Validatable.
 func (p *ProviderConfig) tracingName() string {
 	return p.Addr().String()
+}
+
+// reportNamedPromises implements namedPromiseReporter.
+func (p *ProviderConfig) reportNamedPromises(cb func(id promising.PromiseID, name string)) {
+	cb(p.providerArgs.PromiseID(), p.Addr().String())
 }

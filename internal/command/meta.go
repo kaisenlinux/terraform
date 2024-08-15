@@ -24,6 +24,7 @@ import (
 
 	"github.com/hashicorp/terraform/internal/addrs"
 	"github.com/hashicorp/terraform/internal/backend"
+	"github.com/hashicorp/terraform/internal/backend/backendrun"
 	"github.com/hashicorp/terraform/internal/backend/local"
 	"github.com/hashicorp/terraform/internal/command/arguments"
 	"github.com/hashicorp/terraform/internal/command/format"
@@ -33,7 +34,6 @@ import (
 	"github.com/hashicorp/terraform/internal/configs"
 	"github.com/hashicorp/terraform/internal/configs/configload"
 	"github.com/hashicorp/terraform/internal/getproviders"
-	legacy "github.com/hashicorp/terraform/internal/legacy/terraform"
 	"github.com/hashicorp/terraform/internal/providers"
 	"github.com/hashicorp/terraform/internal/provisioners"
 	"github.com/hashicorp/terraform/internal/states"
@@ -201,10 +201,10 @@ type Meta struct {
 	configLoader *configload.Loader
 
 	// backendState is the currently active backend state
-	backendState *legacy.BackendState
+	backendState *workdir.BackendState
 
 	// Variables for the context (private)
-	variableArgs rawFlags
+	variableArgs arguments.FlagNameValueSlice
 	input        bool
 
 	// Targets for this context (private)
@@ -467,7 +467,7 @@ func (m *Meta) CommandContext() context.Context {
 // If the operation runs to completion then no error is returned even if the
 // operation itself is unsuccessful. Use the "Result" field of the
 // returned operation object to recognize operation-level failure.
-func (m *Meta) RunOperation(b backend.Enhanced, opReq *backend.Operation) (*backend.RunningOperation, error) {
+func (m *Meta) RunOperation(b backendrun.OperationsBackend, opReq *backendrun.Operation) (*backendrun.RunningOperation, error) {
 	if opReq.View == nil {
 		panic("RunOperation called with nil View")
 	}
@@ -579,11 +579,11 @@ func (m *Meta) extendedFlagSet(n string) *flag.FlagSet {
 	f := m.defaultFlagSet(n)
 
 	f.BoolVar(&m.input, "input", true, "input")
-	f.Var((*FlagStringSlice)(&m.targetFlags), "target", "resource to target")
+	f.Var((*arguments.FlagStringSlice)(&m.targetFlags), "target", "resource to target")
 	f.BoolVar(&m.compactWarnings, "compact-warnings", false, "use compact warnings")
 
-	if m.variableArgs.items == nil {
-		m.variableArgs = newRawFlags("-var")
+	if m.variableArgs.Items == nil {
+		m.variableArgs = arguments.NewFlagNameValueSlice("-var")
 	}
 	varValues := m.variableArgs.Alias("-var")
 	varFiles := m.variableArgs.Alias("-var-file")
@@ -734,6 +734,28 @@ func (m *Meta) showDiagnostics(vals ...interface{}) {
 			m.Ui.Output(msg)
 		}
 	}
+}
+
+const (
+	// StatePersistIntervalEnvVar is the environment variable that can be set
+	// to control the interval at which Terraform persists state. The interval
+	// itself defaults to 20 seconds.
+	StatePersistIntervalEnvVar = "TF_STATE_PERSIST_INTERVAL"
+)
+
+// StatePersistInterval returns the configured interval that Terraform should
+// persist statefiles to the desired backend. Backends may choose to override
+// the default value.
+func (m *Meta) StatePersistInterval() int {
+	if val, ok := os.LookupEnv(StatePersistIntervalEnvVar); ok {
+		if interval, err := strconv.Atoi(val); err == nil && interval > DefaultStatePersistInterval {
+			// The user-specified interval must be greater than the default minimum
+			return interval
+		} else if err != nil {
+			log.Printf("[ERROR] Can't parse state persist interval %q of environment variable %q", val, StatePersistIntervalEnvVar)
+		}
+	}
+	return DefaultStatePersistInterval
 }
 
 // WorkspaceNameEnvVar is the name of the environment variable that can be used

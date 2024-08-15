@@ -6,6 +6,8 @@ package stackeval
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -593,6 +595,12 @@ func TestPlanning_DeferredChangesPropagation(t *testing.T) {
 	cfg := testStackConfig(t, "planning", "deferred_changes_propagation")
 	main := NewForPlanning(cfg, stackstate.NewState(), PlanOpts{
 		PlanningMode: plans.NormalMode,
+		// TEMP: Currently there's no way in normal operation to set this to
+		// true in the PlanOpts, because it would regress other features. So,
+		// the test has to set it manually. In the future, deferred actions will
+		// always be enabled for stacks, and we'll remove this option from the
+		// stackeval.PlanOpts struct.
+		DeferralAllowed: true,
 		InputVariableValues: map[stackaddrs.InputVariable]ExternalInputValue{
 			// This causes the first component to have a module whose
 			// instance count isn't known yet.
@@ -617,10 +625,6 @@ func TestPlanning_DeferredChangesPropagation(t *testing.T) {
 			},
 		},
 	})
-	// TEMP: This test currently relies on the experimental module language
-	// feature of allowing unknown values in a resource's "count" argument.
-	// We should remove this if the experiment gets stabilized.
-	main.AllowLanguageExperiments(true)
 
 	componentFirstInstAddr := stackaddrs.AbsComponentInstance{
 		Stack: stackaddrs.RootStackInstance,
@@ -878,6 +882,67 @@ func TestPlanning_RemoveDataResource(t *testing.T) {
 	if objState != nil {
 		t.Errorf("%s is still in the state after it should've been dropped", objAddr)
 	}
+}
+
+func TestPlanning_PathValues(t *testing.T) {
+	cfg := testStackConfig(t, "planning", "path_values")
+	main := NewForPlanning(cfg, stackstate.NewState(), PlanOpts{
+		PlanningMode: plans.NormalMode,
+	})
+
+	inPromisingTask(t, func(ctx context.Context, t *testing.T) {
+		plan, diags := testPlan(t, main)
+		if len(diags) > 0 {
+			t.Fatalf("unexpected diagnostics: %s", diags)
+		}
+
+		component, ok := plan.Components.GetOk(stackaddrs.AbsComponentInstance{
+			Stack: stackaddrs.RootStackInstance,
+			Item: stackaddrs.ComponentInstance{
+				Component: stackaddrs.Component{
+					Name: "path_values",
+				},
+				Key: addrs.NoKey,
+			},
+		})
+		if !ok {
+			t.Fatalf("component not found in plan")
+		}
+
+		cwd, err := os.Getwd()
+		if err != nil {
+			t.Fatalf("failed to get current working directory: %s", err)
+		}
+
+		normalizePath := func(path string) string {
+			rel, err := filepath.Rel(cwd, path)
+			if err != nil {
+				t.Errorf("rel(%s,%s): %s", cwd, path, err)
+				return path
+			}
+			return rel
+		}
+
+		expected := map[string]string{
+			"cwd":          ".",
+			"root":         "testdata/sourcebundle/planning/path_values/module",       // this is the root module of the component
+			"module":       "testdata/sourcebundle/planning/path_values/module",       // this is the root module
+			"child_root":   "testdata/sourcebundle/planning/path_values/module",       // should be the same for all modules
+			"child_module": "testdata/sourcebundle/planning/path_values/module/child", // this is the child module
+		}
+
+		actual := map[string]string{
+			"cwd":          normalizePath(component.PlannedOutputValues[addrs.OutputValue{Name: "cwd"}].AsString()),
+			"root":         normalizePath(component.PlannedOutputValues[addrs.OutputValue{Name: "root"}].AsString()),
+			"module":       normalizePath(component.PlannedOutputValues[addrs.OutputValue{Name: "module"}].AsString()),
+			"child_root":   normalizePath(component.PlannedOutputValues[addrs.OutputValue{Name: "child_root"}].AsString()),
+			"child_module": normalizePath(component.PlannedOutputValues[addrs.OutputValue{Name: "child_module"}].AsString()),
+		}
+
+		if cmp.Diff(expected, actual) != "" {
+			t.Fatalf("unexpected path values\n%s", cmp.Diff(expected, actual))
+		}
+	})
 }
 
 func TestPlanning_NoWorkspaceNameRef(t *testing.T) {

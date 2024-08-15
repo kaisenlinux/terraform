@@ -154,6 +154,8 @@ func (c *Context) ApplyAndEval(plan *plans.Plan, config *configs.Config, opts *A
 		Overrides:               plan.Overrides,
 		ExternalProviderConfigs: opts.ExternalProviders,
 
+		DeferralAllowed: true,
+
 		// We need to propagate the check results from the plan phase,
 		// because that will tell us which checkable objects we're expecting
 		// to see updated results from during the apply step.
@@ -277,6 +279,7 @@ func (c *Context) applyGraph(plan *plans.Plan, config *configs.Config, opts *App
 	graph, moreDiags := (&ApplyGraphBuilder{
 		Config:                  config,
 		Changes:                 plan.Changes,
+		DeferredChanges:         plan.DeferredResources,
 		State:                   plan.PriorState,
 		RootVariableValues:      variables,
 		ExternalProviderConfigs: externalProviderConfigs,
