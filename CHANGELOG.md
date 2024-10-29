@@ -1,3 +1,36 @@
+## 1.9.8 (October 16, 2024)
+
+BUG FIXES:
+
+* init: Highlight missing subdirectories of registry modules in error message ([#35848](https://github.com/hashicorp/terraform/pull/35848))
+* init: Prevent crash when loading `provider_meta` blocks with invalid names ([#35842](https://github.com/hashicorp/terraform/pull/35842))
+* config generation: Escape all invalid syntax in generate map keys with quotes ([#35837](https://github.com/hashicorp/terraform/pull/35837))
+* plan: also validate provider requirements from state ([#35864](https://github.com/hashicorp/terraform/pull/35864))
+
+## 1.9.7 (October 2, 2024)
+
+BUG FIXES:
+
+* config generation: escape map keys with whitespaces ([#35754](https://github.com/hashicorp/terraform/pull/35754))
+
+## 1.9.6 (September 18, 2024)
+
+BUG FIXES:
+
+* plan renderer: Render complete changes within unknown nested blocks. ([#35644](https://github.com/hashicorp/terraform/issues/35644))
+* plan renderer: Fix crash when attempting to render unknown nested blocks that contain attributes forcing resource replacement. ([#35644](https://github.com/hashicorp/terraform/issues/35644))
+* plan renderer: Fix crash when rendering a plan that contains null attributes being update to unknown values. ([#35709](https://github.com/hashicorp/terraform/issues/35709))
+
+## 1.9.5 (August 20, 2024)
+
+ENHANCEMENTS:
+
+* cloud: The cloud block can now interact with workspaces that have HCP resource IDs. ([#35495](https://github.com/hashicorp/terraform/issues/35495))
+
+BUG FIXES:
+
+* core: `removed` blocks with provisioners were not executed when the resource was in a nested module. ([#35611](https://github.com/hashicorp/terraform/issues/35611))
+
 ## 1.9.4 (August 7, 2024)
 
 BUG FIXES:
