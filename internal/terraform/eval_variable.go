@@ -189,6 +189,36 @@ func prepareFinalInputVariableValue(addr addrs.AbsInputVariableInstance, raw *In
 		}
 	}
 
+	if cfg.Ephemeral {
+		// An ephemeral input variable always has an ephemeral value inside the
+		// module, even if the value assigned to it from outside is not. This
+		// is a useful simplification so that module authors can be explicit
+		// about what guarantees they are intending to make (regardless of
+		// current implementation details). Changing the ephemerality of an
+		// input variable is a breaking change to a module's API.
+		val = val.Mark(marks.Ephemeral)
+	} else {
+		if marks.Contains(val, marks.Ephemeral) {
+			var subject hcl.Range
+			if raw.HasSourceRange() {
+				subject = raw.SourceRange.ToHCL()
+			} else {
+				// We shouldn't typically get here for ephemeral values, because
+				// all of the source types that can represent expressions that
+				// could potentially produce ephemeral values are those which
+				// have source locations. This is just here for robustness.
+				subject = cfg.DeclRange
+			}
+
+			diags = diags.Append(&hcl.Diagnostic{
+				Severity: hcl.DiagError,
+				Summary:  "Ephemeral value not allowed",
+				Detail:   "This input variable is not declared as accepting a ephemeral values, so it cannot be set to a result derived from an ephemeral value.",
+				Subject:  subject.Ptr(),
+			})
+		}
+	}
+
 	return val, diags
 }
 
@@ -197,8 +227,8 @@ func prepareFinalInputVariableValue(addr addrs.AbsInputVariableInstance, raw *In
 //
 // This must be used only after any side-effects that make the value of the
 // variable available for use in expression evaluation, such as
-// EvalModuleCallArgument for variables in descendent modules.
-func evalVariableValidations(addr addrs.AbsInputVariableInstance, ctx EvalContext, rules []*configs.CheckRule, valueRng hcl.Range) (diags tfdiags.Diagnostics) {
+// EvalModuleCallArgument for variables in descendant modules.
+func evalVariableValidations(addr addrs.AbsInputVariableInstance, ctx EvalContext, rules []*configs.CheckRule, valueRng hcl.Range, validateWalk bool) (diags tfdiags.Diagnostics) {
 	if len(rules) == 0 {
 		log.Printf("[TRACE] evalVariableValidations: no validation rules declared for %s, so skipping", addr)
 		return nil
@@ -280,7 +310,7 @@ func evalVariableValidations(addr addrs.AbsInputVariableInstance, ctx EvalContex
 	}
 
 	for ix, validation := range rules {
-		result, ruleDiags := evalVariableValidation(validation, hclCtx, valueRng, addr, ix)
+		result, ruleDiags := evalVariableValidation(validation, hclCtx, valueRng, addr, ix, validateWalk)
 		diags = diags.Append(ruleDiags)
 
 		log.Printf("[TRACE] evalVariableValidations: %s status is now %s", addr, result.Status)
@@ -294,7 +324,7 @@ func evalVariableValidations(addr addrs.AbsInputVariableInstance, ctx EvalContex
 	return diags
 }
 
-func evalVariableValidation(validation *configs.CheckRule, hclCtx *hcl.EvalContext, valueRng hcl.Range, addr addrs.AbsInputVariableInstance, ix int) (checkResult, tfdiags.Diagnostics) {
+func evalVariableValidation(validation *configs.CheckRule, hclCtx *hcl.EvalContext, valueRng hcl.Range, addr addrs.AbsInputVariableInstance, ix int, validateWalk bool) (checkResult, tfdiags.Diagnostics) {
 	const errInvalidCondition = "Invalid variable validation result"
 	const errInvalidValue = "Invalid value for variable"
 	var diags tfdiags.Diagnostics
@@ -398,6 +428,11 @@ func evalVariableValidation(validation *configs.CheckRule, hclCtx *hcl.EvalConte
 	}
 
 	if !errorValue.IsKnown() {
+		if validateWalk {
+			log.Printf("[DEBUG] evalVariableValidations: %s rule %s error_message value is unknown, so skipping validation for now", addr, validation.DeclRange)
+			return checkResult{Status: checks.StatusUnknown}, diags
+		}
+
 		diags = diags.Append(&hcl.Diagnostic{
 			Severity:    hcl.DiagError,
 			Summary:     "Invalid error message",
@@ -434,6 +469,20 @@ func evalVariableValidation(validation *configs.CheckRule, hclCtx *hcl.EvalConte
 					Detail: `The error expression used to explain this condition refers to sensitive values. Terraform will not display the resulting message.
 
 You can correct this by removing references to sensitive values, or by carefully using the nonsensitive() function if the expression will not reveal the sensitive data.`,
+
+					Subject:     validation.ErrorMessage.Range().Ptr(),
+					Expression:  validation.ErrorMessage,
+					EvalContext: hclCtx,
+				})
+				errorMessage = "The error message included a sensitive value, so it will not be displayed."
+			} else if marks.Has(errorValue, marks.Ephemeral) {
+				diags = diags.Append(&hcl.Diagnostic{
+					Severity: hcl.DiagError,
+
+					Summary: "Error message refers to ephemeral values",
+					Detail: `The error expression used to explain this condition refers to ephemeral values. Terraform will not display the resulting message.
+
+You can correct this by removing references to ephemeral values, or by carefully using the ephemeralasnull() function if the expression will not reveal the ephemeral data.`,
 
 					Subject:     validation.ErrorMessage.Range().Ptr(),
 					Expression:  validation.ErrorMessage,

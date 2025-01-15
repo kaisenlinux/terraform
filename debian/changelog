@@ -1,10 +1,16 @@
+terraform (1.10.4-1kaisen) kaisen-packages; urgency=medium
+
+  * Import the 1.10.4 release
+  * Bump the golang-go version required to build
+
+ -- Kevin Chevreuil - Kaisen <kaisen@kaisenlinux.org>  Wed, 15 Jan 2025 14:19:02 +0200
+
 terraform (1.9.8-1kaisen) kaisen-packages; urgency=medium
 
   * Import the 1.9.8 release
   * Bump the golang-go version required to build
 
  -- Kevin Chevreuil - Kaisen <kaisen@kaisenlinux.org>  Tue, 29 Oct 2024 17:51:39 +0200
-
 
 terraform (1.9.4-1kaisen) kaisen-packages; urgency=medium
 

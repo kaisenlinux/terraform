@@ -61,7 +61,12 @@ var (
 	_ GraphNodeExecutable                    = (*NodePlanDeposedResourceInstanceObject)(nil)
 	_ GraphNodeProviderConsumer              = (*NodePlanDeposedResourceInstanceObject)(nil)
 	_ GraphNodeProvisionerConsumer           = (*NodePlanDeposedResourceInstanceObject)(nil)
+	_ GraphNodeDestroyer                     = (*NodePlanDeposedResourceInstanceObject)(nil)
 )
+
+func (n *NodePlanDeposedResourceInstanceObject) DestroyAddr() *addrs.AbsResourceInstance {
+	return &n.Addr
+}
 
 func (n *NodePlanDeposedResourceInstanceObject) Name() string {
 	return fmt.Sprintf("%s (deposed %s)", n.ResourceInstanceAddr().String(), n.DeposedKey)
@@ -87,6 +92,8 @@ func (n *NodePlanDeposedResourceInstanceObject) References() []*addrs.Reference 
 // GraphNodeEvalable impl.
 func (n *NodePlanDeposedResourceInstanceObject) Execute(ctx EvalContext, op walkOperation) (diags tfdiags.Diagnostics) {
 	log.Printf("[TRACE] NodePlanDeposedResourceInstanceObject: planning %s deposed object %s", n.Addr, n.DeposedKey)
+
+	var deferred *providers.Deferred
 
 	// Read the state for the deposed resource instance
 	state, err := n.readResourceInstanceStateDeposed(ctx, n.Addr, n.DeposedKey)
@@ -135,51 +142,48 @@ func (n *NodePlanDeposedResourceInstanceObject) Execute(ctx EvalContext, op walk
 		// resource during Delete correctly. If this is a simple refresh,
 		// Terraform is expected to remove the missing resource from the state
 		// entirely
-		refreshedState, deferred, refreshDiags := n.refresh(ctx, n.DeposedKey, state, ctx.Deferrals().DeferralAllowed())
+		refreshedState, refreshDeferred, refreshDiags := n.refresh(ctx, n.DeposedKey, state, ctx.Deferrals().DeferralAllowed())
 		diags = diags.Append(refreshDiags)
 		if diags.HasErrors() {
 			return diags
 		}
 
-		diags = diags.Append(n.writeResourceInstanceStateDeposed(ctx, n.DeposedKey, refreshedState, refreshState))
-		if diags.HasErrors() {
-			return diags
-		}
+		state = refreshedState
 
 		// If we refreshed then our subsequent planning should be in terms of
 		// the new object, not the original object.
-		if deferred == nil {
-			state = refreshedState
+		if refreshDeferred == nil {
+			diags = diags.Append(n.writeResourceInstanceStateDeposed(ctx, n.DeposedKey, refreshedState, refreshState))
+			if diags.HasErrors() {
+				return diags
+			}
 		} else {
-			ctx.Deferrals().ReportResourceInstanceDeferred(n.Addr, deferred.Reason, &plans.ResourceInstanceChange{
-				Addr: n.Addr,
-				Change: plans.Change{
-					Action: plans.Read,
-					Before: state.Value,
-					After:  refreshedState.Value,
-				},
-			})
+			deferred = refreshDeferred
 		}
 	}
 
 	if !n.skipPlanChanges {
 		var change *plans.ResourceInstanceChange
 		var pDiags tfdiags.Diagnostics
-		var deferred *providers.Deferred
+		var planDeferred *providers.Deferred
 		if forget {
 			change, pDiags = n.planForget(ctx, state, n.DeposedKey)
 		} else {
-			change, deferred, pDiags = n.planDestroy(ctx, state, n.DeposedKey)
+			change, planDeferred, pDiags = n.planDestroy(ctx, state, n.DeposedKey)
 		}
 		diags = diags.Append(pDiags)
 		if diags.HasErrors() {
 			return diags
 		}
+
+		if deferred == nil {
+			// Only set the plan deferral if it wasn't already due to be
+			// deferred from the refresh step.
+			deferred = planDeferred
+		}
+
 		if deferred != nil {
-			ctx.Deferrals().ReportResourceInstanceDeferred(n.Addr, deferred.Reason, &plans.ResourceInstanceChange{
-				Addr:   n.Addr,
-				Change: change.Change,
-			})
+			ctx.Deferrals().ReportResourceInstanceDeferred(n.Addr, deferred.Reason, change)
 			return diags
 		}
 
@@ -227,6 +231,7 @@ var (
 	_ GraphNodeExecutable                    = (*NodeDestroyDeposedResourceInstanceObject)(nil)
 	_ GraphNodeProviderConsumer              = (*NodeDestroyDeposedResourceInstanceObject)(nil)
 	_ GraphNodeProvisionerConsumer           = (*NodeDestroyDeposedResourceInstanceObject)(nil)
+	_ GraphNodeDestroyer                     = (*NodeDestroyDeposedResourceInstanceObject)(nil)
 )
 
 func (n *NodeDestroyDeposedResourceInstanceObject) Name() string {
@@ -294,10 +299,10 @@ func (n *NodeDestroyDeposedResourceInstanceObject) Execute(ctx EvalContext, op w
 	}
 
 	if deferred != nil {
-		ctx.Deferrals().ReportResourceInstanceDeferred(n.Addr, deferred.Reason, &plans.ResourceInstanceChange{
-			Addr:   n.Addr,
-			Change: change.Change,
-		})
+		ctx.Deferrals().ReportResourceInstanceDeferred(n.Addr, deferred.Reason, change)
+		return diags
+	} else if ctx.Deferrals().ShouldDeferResourceInstanceChanges(n.Addr, n.Dependencies) {
+		ctx.Deferrals().ReportResourceInstanceDeferred(n.Addr, providers.DeferredReasonDeferredPrereq, change)
 		return diags
 	}
 
@@ -345,10 +350,15 @@ var (
 	_ GraphNodeExecutable                    = (*NodeForgetDeposedResourceInstanceObject)(nil)
 	_ GraphNodeProviderConsumer              = (*NodeForgetDeposedResourceInstanceObject)(nil)
 	_ GraphNodeProvisionerConsumer           = (*NodeForgetDeposedResourceInstanceObject)(nil)
+	_ GraphNodeDestroyer                     = (*NodeForgetDeposedResourceInstanceObject)(nil)
 )
 
 func (n *NodeForgetDeposedResourceInstanceObject) Name() string {
 	return fmt.Sprintf("%s (forget deposed %s)", n.ResourceInstanceAddr(), n.DeposedKey)
+}
+
+func (n *NodeForgetDeposedResourceInstanceObject) DestroyAddr() *addrs.AbsResourceInstance {
+	return &n.Addr
 }
 
 func (n *NodeForgetDeposedResourceInstanceObject) DeposedInstanceObjectKey() states.DeposedKey {

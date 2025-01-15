@@ -5,6 +5,7 @@ package stackeval
 
 import (
 	"testing"
+	"time"
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/zclconf/go-cty/cty"
@@ -12,6 +13,8 @@ import (
 	"github.com/hashicorp/terraform/internal/addrs"
 	"github.com/hashicorp/terraform/internal/collections"
 	"github.com/hashicorp/terraform/internal/configs/configschema"
+	"github.com/hashicorp/terraform/internal/depsfile"
+	"github.com/hashicorp/terraform/internal/getproviders/providerreqs"
 	"github.com/hashicorp/terraform/internal/plans"
 	"github.com/hashicorp/terraform/internal/promising"
 	"github.com/hashicorp/terraform/internal/providers"
@@ -41,6 +44,15 @@ func TestNamedPromisesPlan(t *testing.T) {
 
 	cfg := testStackConfig(t, "planning", "named_promises")
 
+	providerAddrs := addrs.MustParseProviderSourceString("example.com/test/happycloud")
+	lock := depsfile.NewLocks()
+	lock.SetProvider(
+		providerAddrs,
+		providerreqs.MustParseVersion("0.0.0"),
+		providerreqs.MustParseVersionConstraints("=0.0.0"),
+		providerreqs.PreferredHashes([]providerreqs.Hash{}),
+	)
+
 	main := NewForPlanning(cfg, stackstate.NewState(), PlanOpts{
 		PlanningMode: plans.NormalMode,
 		InputVariableValues: map[stackaddrs.InputVariable]ExternalInputValue{
@@ -49,7 +61,7 @@ func TestNamedPromisesPlan(t *testing.T) {
 			},
 		},
 		ProviderFactories: ProviderFactories{
-			addrs.MustParseProviderSourceString("example.com/test/happycloud"): providers.FactoryFixed(
+			providerAddrs: providers.FactoryFixed(
 				&providertest.MockProvider{
 					GetProviderSchemaResponse: &providers.GetProviderSchemaResponse{
 						Provider: providers.Schema{
@@ -64,6 +76,8 @@ func TestNamedPromisesPlan(t *testing.T) {
 				},
 			),
 		},
+		DependencyLocks: *lock,
+		PlanTimestamp:   time.Now().UTC(),
 	})
 
 	// We don't actually really care about the plan here. We just want the
@@ -127,7 +141,8 @@ func TestNamedPromisesPlan(t *testing.T) {
 	}
 
 	// Since we're now holding all of the information required, let's also
-	// test that we can render some self-dependency diagnostic messages.
+	// test that we can render some self-dependency and resolution failure
+	// diagnostic messages.
 	t.Run("diagnostics", func(t *testing.T) {
 		// For this we need to choose some specific promise ids to report.
 		// It doesn't matter which ones we use but we can only proceed if
@@ -138,7 +153,7 @@ func TestNamedPromisesPlan(t *testing.T) {
 			t.Fatalf("don't have the promise ids required to test diagnostic rendering")
 		}
 
-		t.Run("just one", func(t *testing.T) {
+		t.Run("just one self-reference", func(t *testing.T) {
 			err := promising.ErrSelfDependent{stackCallInstancesPromise}
 			diag := taskSelfDependencyDiagnostic{
 				err:  err,
@@ -153,7 +168,7 @@ func TestNamedPromisesPlan(t *testing.T) {
 				t.Errorf("wrong diagnostic description\n%s", diff)
 			}
 		})
-		t.Run("multiple", func(t *testing.T) {
+		t.Run("multiple self-references", func(t *testing.T) {
 			err := promising.ErrSelfDependent{
 				providerSchemaPromise,
 				stackCallInstancesPromise,
@@ -170,6 +185,46 @@ func TestNamedPromisesPlan(t *testing.T) {
   - stack.child instances
 
 Terraform uses references to decide a suitable order for performing operations, so configuration items may not refer to their own results either directly or indirectly.`,
+			}
+			if diff := cmp.Diff(want, got); diff != "" {
+				t.Errorf("wrong diagnostic description\n%s", diff)
+			}
+		})
+		t.Run("just one failure to resolve", func(t *testing.T) {
+			err := promising.ErrUnresolved{stackCallInstancesPromise}
+			diag := taskPromisesUnresolvedDiagnostic{
+				err:  err,
+				root: main,
+			}
+			got := diag.Description()
+			want := tfdiags.Description{
+				Summary: `Stack language evaluation error`,
+				Detail: `While evaluating the stack configuration, the following items were left unresolved:
+  - stack.child instances
+
+Other errors returned along with this one may provide more details. This is a bug in Teraform; please report it!`,
+			}
+			if diff := cmp.Diff(want, got); diff != "" {
+				t.Errorf("wrong diagnostic description\n%s", diff)
+			}
+		})
+		t.Run("multiple failures to resolve", func(t *testing.T) {
+			err := promising.ErrUnresolved{
+				providerSchemaPromise,
+				stackCallInstancesPromise,
+			}
+			diag := taskPromisesUnresolvedDiagnostic{
+				err:  err,
+				root: main,
+			}
+			got := diag.Description()
+			want := tfdiags.Description{
+				Summary: `Stack language evaluation error`,
+				Detail: `While evaluating the stack configuration, the following items were left unresolved:
+  - example.com/test/happycloud schema
+  - stack.child instances
+
+Other errors returned along with this one may provide more details. This is a bug in Teraform; please report it!`,
 			}
 			if diff := cmp.Diff(want, got); diff != "" {
 				t.Errorf("wrong diagnostic description\n%s", diff)

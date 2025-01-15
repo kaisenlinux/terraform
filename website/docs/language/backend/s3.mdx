@@ -47,8 +47,8 @@ Using the example above, the state for the workspace `development` would be stor
 When not using [workspaces](/terraform/language/state/workspaces)(or when only using the `default` workspace), Terraform will need the following AWS IAM permissions on the target backend bucket:
 
 * `s3:ListBucket` on `arn:aws:s3:::mybucket`. At a minimum, this must be able to list the path where the state is stored.
-* `s3:GetObject` on `arn:aws:s3:::mybucket/path/to/my/key`
-* `s3:PutObject` on `arn:aws:s3:::mybucket/path/to/my/key`
+* `s3:GetObject` on `arn:aws:s3:::mybucket/path/to/my/key` and `arn:aws:s3:::mybucket/path/to/my/key.tflock`
+* `s3:PutObject` on `arn:aws:s3:::mybucket/path/to/my/key` and `arn:aws:s3:::mybucket/path/to/my/key.tflock`
 
 Note: `s3:DeleteObject` is not needed, as Terraform will not delete the state storage.
 
@@ -66,7 +66,10 @@ This is seen in the following AWS IAM Statement:
     {
       "Effect": "Allow",
       "Action": ["s3:GetObject", "s3:PutObject"],
-      "Resource": "arn:aws:s3:::mybucket/path/to/my/key"
+      "Resource": [
+        "arn:aws:s3:::mybucket/path/to/my/key",
+        "arn:aws:s3:::mybucket/path/to/my/key.tflock"
+      ]
     }
   ]
 }
@@ -75,9 +78,9 @@ This is seen in the following AWS IAM Statement:
 When using [workspaces](/terraform/language/state/workspaces), Terraform will also need permissions to create, list, read, update, and delete the workspace state storage:
 
 * `s3:ListBucket` on `arn:aws:s3:::mybucket`. At a minumum, this must be able to list the path where the `default` workspace is stored as well as the other workspaces.
-* `s3:GetObject` on `arn:aws:s3:::mybucket/path/to/my/key` and `arn:aws:s3:::mybucket/<workspace_key_prefix>/*/path/to/my/key`
-* `s3:PutObject` on `arn:aws:s3:::mybucket/path/to/my/key` and `arn:aws:s3:::mybucket/<workspace_key_prefix>/*/path/to/my/key`
-* `s3:DeleteObject` on `arn:aws:s3:::mybucket/<workspace_key_prefix>/*/path/to/my/key`
+* `s3:GetObject` on `arn:aws:s3:::mybucket/path/to/my/key`, `arn:aws:s3:::mybucket/<workspace_key_prefix>/*/path/to/my/key` and `arn:aws:s3:::mybucket/<workspace_key_prefix>/*/path/to/my/key.tflock`
+* `s3:PutObject` on `arn:aws:s3:::mybucket/path/to/my/key`, `arn:aws:s3:::mybucket/<workspace_key_prefix>/*/path/to/my/key` and `arn:aws:s3:::mybucket/<workspace_key_prefix>/*/path/to/my/key.tflock`
+* `s3:DeleteObject` on `arn:aws:s3:::mybucket/<workspace_key_prefix>/*/path/to/my/key` and `arn:aws:s3:::mybucket/<workspace_key_prefix>/*/path/to/my/key.tflock`
 
 -> **Note:** AWS can control access to S3 buckets with either IAM policies
 attached to users/groups/roles (like the example above) or resource policies
@@ -118,9 +121,8 @@ This is seen in the following AWS IAM Statement:
 
 ## Data Source Configuration
 
-To make use of the S3 remote state in another configuration, use the
-[`terraform_remote_state` data
-source](/terraform/language/state/remote-state-data).
+To make use of the S3 remote state in another configuration,
+use the [`terraform_remote_state` data source](/terraform/language/state/remote-state-data).
 
 ```hcl
 data "terraform_remote_state" "network" {
@@ -167,6 +169,7 @@ The following configuration is required:
 
 The following configuration is optional:
 
+* `use_lockfile` - (Experimental, Optional) Whether to use a lockfile for locking the state file. Defaults to `false`.
 * `access_key` - (Optional) AWS access key. If configured, must also configure `secret_key`. This can also be sourced from the `AWS_ACCESS_KEY_ID` environment variable, AWS shared credentials file (e.g. `~/.aws/credentials`), or AWS shared configuration file (e.g. `~/.aws/config`).
 * `allowed_account_ids` - (Optional) List of allowed AWS account IDs to prevent potential destruction of a live environment. Conflicts with `forbidden_account_ids`.
 * `custom_ca_bundle` - (Optional) File containing custom root and intermediate certificates. Can also be set using the `AWS_CA_BUNDLE` environment variable. Setting ca_bundle in the shared config file is not supported.
@@ -237,9 +240,6 @@ Endpoints set for specific services will override the base endpoint configured i
 
 #### Assume Role Configuration
 
-Assuming an IAM Role can be configured in two ways.
-The preferred way is to use the argument `assume_role`, the other, which is deprecated, is with arguments at the top level.
-
 The argument `assume_role` contains the following arguments:
 
 * `role_arn` - (Required) Amazon Resource Name (ARN) of the IAM Role to assume.
@@ -256,30 +256,13 @@ The argument `assume_role` contains the following arguments:
 * `tags` - (Optional) Map of assume role session tags.
 * `transitive_tag_keys` - (Optional) Set of assume role session tag keys to pass to any subsequent sessions.
 
-The following arguments on the top level are deprecated:
-
-* `assume_role_duration_seconds` - (Optional) Number of seconds to restrict the assume role session duration.
-  Use `assume_role.duration` instead.
-* `assume_role_policy` - (Optional) IAM Policy JSON describing further restricting permissions for the IAM Role being assumed.
-  Use `assume_role.policy` instead.
-* `assume_role_policy_arns` - (Optional) Set of Amazon Resource Names (ARNs) of IAM Policies describing further restricting permissions for the IAM Role being assumed.
-  Use `assume_role.policy_arns` instead.
-* `assume_role_tags` - (Optional) Map of assume role session tags.
-  Use `assume_role.tags` instead.
-* `assume_role_transitive_tag_keys` - (Optional) Set of assume role session tag keys to pass to any subsequent sessions.
-  Use `assume_role.transitive_tag_keys` instead.
-* `external_id` - (Optional) External identifier to use when assuming the role.
-  Use `assume_role.external_id` instead.
-* `role_arn` - (Optional) Amazon Resource Name (ARN) of the IAM Role to assume.
-  Use `assume_role.role_arn` instead.
-* `session_name` - (Optional) Session name to use when assuming the role.
-  Use `assume_role.session_name` instead.
+Multiple `assume_role` values can be specified, and the roles will be assumed in order.
 
 ```terraform
 terraform {
   backend "s3" {
-    bucket = "terraform-state-prod"
-    key    = "network/terraform.tfstate"
+    bucket = "example-bucket"
+    key    = "path/to/state"
     region = "us-east-1"
     assume_role = {
       role_arn = "arn:aws:iam::PRODUCTION-ACCOUNT-ID:role/Terraform"
@@ -312,8 +295,8 @@ The following `assume_role_with_web_identity` configuration block is optional:
 ```terraform
 terraform {
   backend "s3" {
-    bucket = "terraform-state-prod"
-    key    = "network/terraform.tfstate"
+    bucket = "example-bucket"
+    key    = "path/to/state"
     region = "us-east-1"
     assume_role_with_web_identity = {
       role_arn           = "arn:aws:iam::PRODUCTION-ACCOUNT-ID:role/Terraform"
@@ -332,23 +315,33 @@ The following configuration is required:
 
 The following configuration is optional:
 
-* `acl` - (Optional) [Canned ACL](https://docs.aws.amazon.com/AmazonS3/latest/userguide/acl-overview.html#canned-acl) to be applied to the state file.
-* `encrypt` - (Optional) Enable [server side encryption](https://docs.aws.amazon.com/AmazonS3/latest/userguide/UsingServerSideEncryption.html) of the state file.
+* `acl` - (Optional) [Canned ACL](https://docs.aws.amazon.com/AmazonS3/latest/userguide/acl-overview.html#canned-acl) to be applied to the state and lock files.
+* `encrypt` - (Optional) Enable [server side encryption](https://docs.aws.amazon.com/AmazonS3/latest/userguide/UsingServerSideEncryption.html) of the state and lock files.
 * `endpoint` - (Optional, **Deprecated**) Custom endpoint URL for the AWS S3 API.
   Use `endpoints.s3` instead.
 * `force_path_style` - (Optional, **Deprecated**) Enable path-style S3 URLs (`https://<HOST>/<BUCKET>` instead of `https://<BUCKET>.<HOST>`).
-* `kms_key_id` - (Optional) Amazon Resource Name (ARN) of a Key Management Service (KMS) Key to use for encrypting the state. Note that if this value is specified, Terraform will need `kms:Encrypt`, `kms:Decrypt` and `kms:GenerateDataKey` permissions on this KMS key.
-* `sse_customer_key` - (Optional) The key to use for encrypting state with [Server-Side Encryption with Customer-Provided Keys (SSE-C)](https://docs.aws.amazon.com/AmazonS3/latest/userguide/ServerSideEncryptionCustomerKeys.html). This is the base64-encoded value of the key, which must decode to 256 bits. This can also be sourced from the `AWS_SSE_CUSTOMER_KEY` environment variable, which is recommended due to the sensitivity of the value. Setting it inside a terraform file will cause it to be persisted to disk in `terraform.tfstate`.
+* `kms_key_id` - (Optional) Amazon Resource Name (ARN) of a Key Management Service (KMS) Key to use for encrypting the state and lock files. Note that if this value is specified, Terraform will need `kms:Encrypt`, `kms:Decrypt` and `kms:GenerateDataKey` permissions on this KMS key.
+* `sse_customer_key` - (Optional) The key to use for encrypting state and lock files with [Server-Side Encryption with Customer-Provided Keys (SSE-C)](https://docs.aws.amazon.com/AmazonS3/latest/userguide/ServerSideEncryptionCustomerKeys.html). This is the base64-encoded value of the key, which must decode to 256 bits. This can also be sourced from the `AWS_SSE_CUSTOMER_KEY` environment variable, which is recommended due to the sensitivity of the value. Setting it inside a terraform file will cause it to be persisted to disk in `terraform.tfstate`.
 * `use_path_style` - (Optional) Enable path-style S3 URLs (`https://<HOST>/<BUCKET>` instead of `https://<BUCKET>.<HOST>`).
 * `workspace_key_prefix` - (Optional) Prefix applied to the state path inside the bucket. This is only relevant when using a non-default workspace. Defaults to `env:`.
 
-### DynamoDB State Locking
+### State Locking
 
-The following configuration is optional:
+State locking is an opt-in feature of the S3 backend.
+
+Locking can be enabled via an S3 "lockfile" (introduced as **experimental** in Terraform 1.10) or DynamoDB.
+To support migration from older versions of Terraform which only support DynamoDB-based locking, the S3 and DynamoDB arguments below can be configured simultaneously.
+In a future minor version the DynamoDB locking mechanism will be removed.
+
+To enable S3 state locking, use the following optional argument:
+
+* `use_lockfile` - (Optional, Experimental) Whether to use a lockfile for locking the state file. Defaults to `false`.
+
+To enable DynamoDB state locking, use the following optional arguments:
 
 * `dynamodb_endpoint` - (Optional, **Deprecated**) Custom endpoint URL for the AWS DynamoDB API.
   Use `endpoints.dynamodb` instead.
-* `dynamodb_table` - (Optional) Name of DynamoDB Table to use for state locking and consistency. The table must have a partition key named `LockID` with type of `String`. If not configured, state locking will be disabled.
+* `dynamodb_table` - (Optional) Name of DynamoDB Table to use for state locking and consistency. The table must have a partition key named `LockID` with type of `String`.
 
 ## Multi-account AWS Architecture
 
@@ -464,7 +457,7 @@ provider "aws" {
   # environment or the global credentials file.
 
   assume_role = {
-    role_arn = "${var.workspace_iam_roles[terraform.workspace]}"
+    role_arn = var.workspace_iam_roles[terraform.workspace]
   }
 }
 ```
@@ -552,17 +545,17 @@ to only a single state object within an S3 bucket is shown below:
     {
       "Effect": "Allow",
       "Action": "s3:ListBucket",
-      "Resource": "arn:aws:s3:::myorg-terraform-states",
+      "Resource": "arn:aws:s3:::example-bucket",
       "Condition": {
         "StringEquals": {
-          "s3:prefix": "myapp/production/tfstate"
+          "s3:prefix": "path/to/state"
         }
       }
     },
     {
       "Effect": "Allow",
       "Action": ["s3:GetObject", "s3:PutObject"],
-      "Resource": "arn:aws:s3:::myorg-terraform-states/myapp/production/tfstate"
+      "Resource": "arn:aws:s3:::example-bucket/myapp/production/tfstate"
     }
   ]
 }
@@ -573,8 +566,8 @@ The example backend configuration below documents the corresponding `bucket` and
 ```hcl
 terraform {
   backend "s3" {
-    bucket = "myorg-terraform-states"
-    key    = "myapp/production/tfstate"
+    bucket = "example-bucket"
+    key    = "path/to/state"
     region = "us-east-1"
   }
 }
@@ -596,12 +589,12 @@ For example, you can use the `dynamodb:LeadingKeys` condition key to match on th
         "dynamodb:GetItem",
         "dynamodb:PutItem"
       ],
-      "Resource": "arn:aws:dynamodb:us-east-1:12341234:table/TableName",
+      "Resource": "arn:aws:dynamodb:us-east-1:12341234:table/example-table",
       "Condition": {
         "ForAllValues:StringEquals": {
           "dynamodb:LeadingKeys": [
-            "TableName/myapp/production/tfstate",
-            "TableName/myapp/production/tfstate-md5"
+            "example-bucket/path/to/state",
+            "example-bucket/path/to/state-md5"
           ]
         }
       }
@@ -617,10 +610,10 @@ The example backend configuration below documents the corresponding arguments:
 ```hcl
 terraform {
   backend "s3" {
-    bucket         = "myorg-terraform-states"
-    key            = "myapp/production/tfstate"
+    bucket         = "example-bucket"
+    key            = "path/to/state"
     region         = "us-east-1"
-    dynamodb_table = "TableName"
+    dynamodb_table = "example-table"
   }
 }
 ```
