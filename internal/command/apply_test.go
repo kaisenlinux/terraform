@@ -294,6 +294,10 @@ func TestApply_parallelism(t *testing.T) {
 	// to proceed in unison.
 	beginCtx, begin := context.WithCancel(context.Background())
 
+	// This just makes go vet happy, in reality the function will never exit if
+	// begin() isn't called inside ApplyResourceChangeFn.
+	defer begin()
+
 	// Since our mock provider has its own mutex preventing concurrent calls
 	// to ApplyResourceChange, we need to use a number of separate providers
 	// here. They will all have the same mock implementation function assigned
@@ -304,7 +308,7 @@ func TestApply_parallelism(t *testing.T) {
 		provider := &testing_provider.MockProvider{}
 		provider.GetProviderSchemaResponse = &providers.GetProviderSchemaResponse{
 			ResourceTypes: map[string]providers.Schema{
-				name + "_instance": {Block: &configschema.Block{}},
+				name + "_instance": {Body: &configschema.Block{}},
 			},
 		}
 		provider.PlanResourceChangeFn = func(req providers.PlanResourceChangeRequest) providers.PlanResourceChangeResponse {
@@ -489,7 +493,7 @@ func TestApply_error(t *testing.T) {
 	p.GetProviderSchemaResponse = &providers.GetProviderSchemaResponse{
 		ResourceTypes: map[string]providers.Schema{
 			"test_instance": {
-				Block: &configschema.Block{
+				Body: &configschema.Block{
 					Attributes: map[string]*configschema.Attribute{
 						"id":    {Type: cty.String, Optional: true, Computed: true},
 						"ami":   {Type: cty.String, Optional: true},
@@ -877,7 +881,7 @@ func TestApply_planWithVarFile(t *testing.T) {
 	p.GetProviderSchemaResponse = &providers.GetProviderSchemaResponse{
 		ResourceTypes: map[string]providers.Schema{
 			"test_instance": {
-				Block: &configschema.Block{
+				Body: &configschema.Block{
 					Attributes: map[string]*configschema.Attribute{
 						"id":    {Type: cty.String, Computed: true},
 						"value": {Type: cty.String, Optional: true},
@@ -987,6 +991,64 @@ func TestApply_planUndeclaredVars(t *testing.T) {
 	output := done(t)
 	if code == 0 {
 		t.Fatal("should've failed: ", output.Stdout())
+	}
+}
+
+func TestApply_planWithEnvVars(t *testing.T) {
+	_, snap := testModuleWithSnapshot(t, "apply-output-only")
+	plan := testPlan(t)
+
+	addr, diags := addrs.ParseAbsOutputValueStr("output.shadow")
+	if diags.HasErrors() {
+		t.Fatal(diags.Err())
+	}
+
+	shadowVal := mustNewDynamicValue("noot", cty.DynamicPseudoType)
+	plan.VariableValues = map[string]plans.DynamicValue{
+		"shadow": shadowVal,
+	}
+	plan.Changes.Outputs = append(plan.Changes.Outputs, &plans.OutputChangeSrc{
+		Addr: addr,
+		ChangeSrc: plans.ChangeSrc{
+			Action: plans.Create,
+			After:  shadowVal,
+		},
+	})
+	planPath := testPlanFileMatchState(
+		t,
+		snap,
+		states.NewState(),
+		plan,
+		statemgr.SnapshotMeta{},
+	)
+
+	statePath := testTempFile(t)
+
+	p := applyFixtureProvider()
+	view, done := testView(t)
+	c := &ApplyCommand{
+		Meta: Meta{
+			testingOverrides: metaOverridesForProvider(p),
+			View:             view,
+		},
+	}
+
+	t.Setenv("TF_VAR_shadow", "env")
+
+	args := []string{
+		"-state", statePath,
+		"-no-color",
+		planPath,
+	}
+	code := c.Run(args)
+	output := done(t)
+	if code != 0 {
+		t.Fatal("unexpected failure: ", output.All())
+	}
+
+	expectedWarn := "Warning: Ignoring variable when applying a saved plan\n"
+	if !strings.Contains(output.Stdout(), expectedWarn) {
+		t.Fatalf("expected warning in output, given: %q", output.Stdout())
 	}
 }
 
@@ -1595,7 +1657,7 @@ func TestApply_shutdown(t *testing.T) {
 	p.GetProviderSchemaResponse = &providers.GetProviderSchemaResponse{
 		ResourceTypes: map[string]providers.Schema{
 			"test_instance": {
-				Block: &configschema.Block{
+				Body: &configschema.Block{
 					Attributes: map[string]*configschema.Attribute{
 						"ami": {Type: cty.String, Optional: true},
 					},
@@ -1807,7 +1869,7 @@ func TestApply_vars(t *testing.T) {
 	p.GetProviderSchemaResponse = &providers.GetProviderSchemaResponse{
 		ResourceTypes: map[string]providers.Schema{
 			"test_instance": {
-				Block: &configschema.Block{
+				Body: &configschema.Block{
 					Attributes: map[string]*configschema.Attribute{
 						"value": {Type: cty.String, Optional: true},
 					},
@@ -1869,7 +1931,7 @@ func TestApply_varFile(t *testing.T) {
 	p.GetProviderSchemaResponse = &providers.GetProviderSchemaResponse{
 		ResourceTypes: map[string]providers.Schema{
 			"test_instance": {
-				Block: &configschema.Block{
+				Body: &configschema.Block{
 					Attributes: map[string]*configschema.Attribute{
 						"value": {Type: cty.String, Optional: true},
 					},
@@ -1931,7 +1993,7 @@ func TestApply_varFileDefault(t *testing.T) {
 	p.GetProviderSchemaResponse = &providers.GetProviderSchemaResponse{
 		ResourceTypes: map[string]providers.Schema{
 			"test_instance": {
-				Block: &configschema.Block{
+				Body: &configschema.Block{
 					Attributes: map[string]*configschema.Attribute{
 						"value": {Type: cty.String, Optional: true},
 					},
@@ -1992,7 +2054,7 @@ func TestApply_varFileDefaultJSON(t *testing.T) {
 	p.GetProviderSchemaResponse = &providers.GetProviderSchemaResponse{
 		ResourceTypes: map[string]providers.Schema{
 			"test_instance": {
-				Block: &configschema.Block{
+				Body: &configschema.Block{
 					Attributes: map[string]*configschema.Attribute{
 						"value": {Type: cty.String, Optional: true},
 					},
@@ -2291,7 +2353,7 @@ func TestApply_targeted(t *testing.T) {
 	p.GetProviderSchemaResponse = &providers.GetProviderSchemaResponse{
 		ResourceTypes: map[string]providers.Schema{
 			"test_instance": {
-				Block: &configschema.Block{
+				Body: &configschema.Block{
 					Attributes: map[string]*configschema.Attribute{
 						"id": {Type: cty.String, Computed: true},
 					},
@@ -2398,7 +2460,7 @@ func TestApply_replace(t *testing.T) {
 	p.GetProviderSchemaResponse = &providers.GetProviderSchemaResponse{
 		ResourceTypes: map[string]providers.Schema{
 			"test_instance": {
-				Block: &configschema.Block{
+				Body: &configschema.Block{
 					Attributes: map[string]*configschema.Attribute{
 						"id": {Type: cty.String, Computed: true},
 					},
@@ -2621,7 +2683,7 @@ func applyFixtureSchema() *providers.GetProviderSchemaResponse {
 	return &providers.GetProviderSchemaResponse{
 		ResourceTypes: map[string]providers.Schema{
 			"test_instance": {
-				Block: &configschema.Block{
+				Body: &configschema.Block{
 					Attributes: map[string]*configschema.Attribute{
 						"id":  {Type: cty.String, Optional: true, Computed: true},
 						"ami": {Type: cty.String, Optional: true},

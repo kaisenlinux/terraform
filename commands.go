@@ -91,7 +91,7 @@ func initCommands(
 		View:       views.NewView(streams).SetRunningInAutomation(inAutomation),
 
 		Color:            true,
-		GlobalPluginDirs: globalPluginDirs(),
+		GlobalPluginDirs: cliconfig.GlobalPluginDirs(),
 		Ui:               Ui,
 
 		Services:        services,
@@ -378,6 +378,12 @@ func initCommands(
 			}, nil
 		},
 
+		"state identities": func() (cli.Command, error) {
+			return &command.StateIdentitiesCommand{
+				Meta: meta,
+			}, nil
+		},
+
 		"state rm": func() (cli.Command, error) {
 			return &command.StateRmCommand{
 				StateMeta: command.StateMeta{
@@ -475,6 +481,6 @@ func makeShutdownCh() <-chan struct{} {
 }
 
 func credentialsSource(config *cliconfig.Config) (auth.CredentialsSource, error) {
-	helperPlugins := pluginDiscovery.FindPlugins("credentials", globalPluginDirs())
+	helperPlugins := pluginDiscovery.FindPlugins("credentials", cliconfig.GlobalPluginDirs())
 	return config.CredentialsSource(helperPlugins)
 }

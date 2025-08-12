@@ -26,7 +26,7 @@ import (
 
 type EvalPhase rune
 
-//go:generate go run golang.org/x/tools/cmd/stringer -type EvalPhase
+//go:generate go tool golang.org/x/tools/cmd/stringer -type EvalPhase
 
 const (
 	NoPhase       EvalPhase = 0
@@ -508,6 +508,6 @@ type JustValue struct {
 var _ Referenceable = JustValue{}
 
 // ExprReferenceValue implements Referenceable.
-func (jv JustValue) ExprReferenceValue(ctx context.Context, phase EvalPhase) cty.Value {
+func (jv JustValue) ExprReferenceValue(context.Context, EvalPhase) cty.Value {
 	return jv.v
 }

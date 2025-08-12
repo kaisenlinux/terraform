@@ -864,13 +864,12 @@ func (c *Context) deferredResources(config *configs.Config, deferrals []*plans.D
 
 	for _, deferral := range deferrals {
 
-		schema, _ := schemas.ResourceTypeConfig(
+		schema := schemas.ResourceTypeConfig(
 			deferral.Change.ProviderAddr.Provider,
 			deferral.Change.Addr.Resource.Resource.Mode,
 			deferral.Change.Addr.Resource.Resource.Type)
 
-		ty := schema.ImpliedType()
-		deferralSrc, err := deferral.Encode(ty)
+		deferralSrc, err := deferral.Encode(schema)
 		if err != nil {
 			diags = diags.Append(tfdiags.Sourceless(
 				tfdiags.Error,
@@ -915,6 +914,7 @@ func (c *Context) planGraph(config *configs.Config, prevRunState *states.State, 
 			forgetResources:         forgetResources,
 			forgetModules:           forgetModules,
 			GenerateConfigPath:      opts.GenerateConfigPath,
+			SkipGraphValidation:     c.graphOpts.SkipGraphValidation,
 		}).Build(addrs.RootModuleInstance)
 		return graph, walkPlan, diags
 	case plans.RefreshOnlyMode:
@@ -930,6 +930,7 @@ func (c *Context) planGraph(config *configs.Config, prevRunState *states.State, 
 			Operation:               walkPlan,
 			ExternalReferences:      opts.ExternalReferences,
 			Overrides:               opts.Overrides,
+			SkipGraphValidation:     c.graphOpts.SkipGraphValidation,
 		}).Build(addrs.RootModuleInstance)
 		return graph, walkPlan, diags
 	case plans.DestroyMode:
@@ -943,6 +944,7 @@ func (c *Context) planGraph(config *configs.Config, prevRunState *states.State, 
 			skipRefresh:             opts.SkipRefresh,
 			Operation:               walkPlanDestroy,
 			Overrides:               opts.Overrides,
+			SkipGraphValidation:     c.graphOpts.SkipGraphValidation,
 		}).Build(addrs.RootModuleInstance)
 		return graph, walkPlanDestroy, diags
 	default:
@@ -998,12 +1000,12 @@ func (c *Context) driftedResources(config *configs.Config, oldState, newState *s
 
 				newIS := newState.ResourceInstance(addr)
 
-				schema, _ := schemas.ResourceTypeConfig(
+				schema := schemas.ResourceTypeConfig(
 					provider,
 					addr.Resource.Resource.Mode,
 					addr.Resource.Resource.Type,
 				)
-				if schema == nil {
+				if schema.Body == nil {
 					diags = diags.Append(tfdiags.Sourceless(
 						tfdiags.Warning,
 						"Missing resource schema from provider",
@@ -1011,9 +1013,8 @@ func (c *Context) driftedResources(config *configs.Config, oldState, newState *s
 					))
 					continue
 				}
-				ty := schema.ImpliedType()
 
-				oldObj, err := oldIS.Current.Decode(ty)
+				oldObj, err := oldIS.Current.Decode(schema)
 				if err != nil {
 					diags = diags.Append(tfdiags.Sourceless(
 						tfdiags.Warning,
@@ -1025,7 +1026,7 @@ func (c *Context) driftedResources(config *configs.Config, oldState, newState *s
 
 				var newObj *states.ResourceInstanceObject
 				if newIS != nil && newIS.Current != nil {
-					newObj, err = newIS.Current.Decode(ty)
+					newObj, err = newIS.Current.Decode(schema)
 					if err != nil {
 						diags = diags.Append(tfdiags.Sourceless(
 							tfdiags.Warning,
@@ -1036,6 +1037,7 @@ func (c *Context) driftedResources(config *configs.Config, oldState, newState *s
 					}
 				}
 
+				ty := schema.Body.ImpliedType()
 				var oldVal, newVal cty.Value
 				oldVal = oldObj.Value
 				if newObj != nil {
@@ -1081,7 +1083,7 @@ func (c *Context) driftedResources(config *configs.Config, oldState, newState *s
 					},
 				}
 
-				changeSrc, err := change.Encode(ty)
+				changeSrc, err := change.Encode(schema)
 				if err != nil {
 					diags = diags.Append(err)
 					return nil, diags

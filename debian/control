@@ -3,7 +3,7 @@ Section: admin
 Priority: optional
 Maintainer: Kevin Chevreuil - Kaisen <kaisen@kaisenlinux.org>
 Build-Depends: debhelper-compat (= 13),
-	       golang-go (>= 1.23.3),
+	       golang-go (>= 1.24.2),
 	       dh-golang,
 Standards-Version: 4.7.2
 Homepage: https://www.terraform.io/

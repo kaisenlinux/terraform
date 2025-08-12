@@ -5,6 +5,7 @@ package terraform
 
 import (
 	"fmt"
+	"path/filepath"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
@@ -21,6 +22,7 @@ import (
 
 func TestContext2Plan_ephemeralValues(t *testing.T) {
 	for name, tc := range map[string]struct {
+		toBeImplemented                             bool
 		module                                      map[string]string
 		expectValidateDiagnostics                   func(m *configs.Config) tfdiags.Diagnostics
 		expectPlanDiagnostics                       func(m *configs.Config) tfdiags.Diagnostics
@@ -48,7 +50,7 @@ ephemeral "ephem_resource" "data" {
 output "value" {
     value = terraform.applying
     # Testing that this errors in the best way to ensure the symbol is ephemeral
-    ephemeral = false 
+    ephemeral = false
 }
 `,
 				"main.tf": `
@@ -62,6 +64,11 @@ module "child" {
 					Severity: hcl.DiagError,
 					Summary:  "Ephemeral value not allowed",
 					Detail:   "This output value is not declared as returning an ephemeral value, so it cannot be set to a result derived from an ephemeral value.",
+					Subject: &hcl.Range{
+						Filename: filepath.Join(m.Module.SourceDir, "child", "main.tf"),
+						Start:    hcl.Pos{Line: 3, Column: 13, Byte: 30},
+						End:      hcl.Pos{Line: 3, Column: 31, Byte: 48},
+					},
 				})
 			},
 		},
@@ -107,7 +114,12 @@ resource "test_object" "test" {
 				return diags.Append(&hcl.Diagnostic{
 					Severity: hcl.DiagError,
 					Summary:  "Invalid use of ephemeral value",
-					Detail:   "Ephemeral values are not valid in resource arguments, because resource instances must persist between Terraform phases.",
+					Detail:   `Ephemeral values are not valid for "test_string", because it is not a write-only attribute and must be persisted to state.`,
+					Subject: &hcl.Range{
+						Filename: filepath.Join(m.Module.SourceDir, "main.tf"),
+						Start:    hcl.Pos{Line: 6, Column: 17, Byte: 88},
+						End:      hcl.Pos{Line: 6, Column: 52, Byte: 123},
+					},
 				})
 			},
 		},
@@ -163,13 +175,17 @@ resource "test_object" "test" {
 					Severity: hcl.DiagError,
 					Summary:  "Invalid for_each argument",
 					Detail:   `The given "for_each" value is derived from an ephemeral value, which means that Terraform cannot persist it between plan/apply rounds. Use only non-ephemeral values to specify a resource's instance keys.`,
+					Subject: &hcl.Range{
+						Filename: filepath.Join(m.Module.SourceDir, "main.tf"),
+						Start:    hcl.Pos{Line: 4, Column: 14, Byte: 83},
+						End:      hcl.Pos{Line: 4, Column: 55, Byte: 124},
+					},
 				})
 			},
 		},
 
 		"resource expansion - count": {
 			module: map[string]string{
-
 				"main.tf": `
 ephemeral "ephem_resource" "data" {}
 resource "test_object" "test" {
@@ -183,6 +199,11 @@ resource "test_object" "test" {
 					Severity: hcl.DiagError,
 					Summary:  "Invalid count argument",
 					Detail:   `The given "count" is derived from an ephemeral value, which means that Terraform cannot persist it between plan/apply rounds. Use only non-ephemeral values to specify the number of resource instances.`,
+					Subject: &hcl.Range{
+						Filename: filepath.Join(m.Module.SourceDir, "main.tf"),
+						Start:    hcl.Pos{Line: 4, Column: 11, Byte: 80},
+						End:      hcl.Pos{Line: 4, Column: 53, Byte: 122},
+					},
 				})
 			},
 		},
@@ -209,6 +230,11 @@ module "child" {
 					Severity: hcl.DiagError,
 					Summary:  "Invalid for_each argument",
 					Detail:   `The given "for_each" value is derived from an ephemeral value, which means that Terraform cannot persist it between plan/apply rounds. Use only non-ephemeral values to specify a resource's instance keys.`,
+					Subject: &hcl.Range{
+						Filename: filepath.Join(m.Module.SourceDir, "main.tf"),
+						Start:    hcl.Pos{Line: 5, Column: 16, Byte: 71},
+						End:      hcl.Pos{Line: 5, Column: 57, Byte: 112},
+					},
 				})
 			},
 		},
@@ -233,6 +259,11 @@ module "child" {
 					Severity: hcl.DiagError,
 					Summary:  "Invalid count argument",
 					Detail:   `The given "count" is derived from an ephemeral value, which means that Terraform cannot persist it between plan/apply rounds. Use only non-ephemeral values to specify the number of resource instances.`,
+					Subject: &hcl.Range{
+						Filename: filepath.Join(m.Module.SourceDir, "main.tf"),
+						Start:    hcl.Pos{Line: 4, Column: 13, Byte: 67},
+						End:      hcl.Pos{Line: 4, Column: 55, Byte: 109},
+					},
 				})
 			},
 		},
@@ -260,6 +291,11 @@ resource "test_object" "test" {
 						Severity: hcl.DiagError,
 						Summary:  "Invalid for_each argument",
 						Detail:   `The given "for_each" value is derived from an ephemeral value, which means that Terraform cannot persist it between plan/apply rounds. Use only non-ephemeral values to specify a resource's instance keys.`,
+						Subject: &hcl.Range{
+							Filename: filepath.Join(m.Module.SourceDir, "main.tf"),
+							Start:    hcl.Pos{Line: 11, Column: 16, Byte: 207},
+							End:      hcl.Pos{Line: 11, Column: 57, Byte: 248},
+						},
 					},
 				)
 			},
@@ -287,6 +323,11 @@ module "child" {
 					Severity: hcl.DiagError,
 					Summary:  "Ephemeral value not allowed",
 					Detail:   "This output value is not declared as returning an ephemeral value, so it cannot be set to a result derived from an ephemeral value.",
+					Subject: &hcl.Range{
+						Filename: filepath.Join(m.Module.SourceDir, "child", "main.tf"),
+						Start:    hcl.Pos{Line: 6, Column: 13, Byte: 132},
+						End:      hcl.Pos{Line: 6, Column: 64, Byte: 183},
+					},
 				})
 			},
 		},
@@ -294,7 +335,7 @@ module "child" {
 		"provider-defined functions": {
 			module: map[string]string{
 				"child/main.tf": `
-				
+
 terraform {
     required_providers {
         ephem = {
@@ -321,6 +362,11 @@ module "child" {
 					Severity: hcl.DiagError,
 					Summary:  "Ephemeral value not allowed",
 					Detail:   "This output value is not declared as returning an ephemeral value, so it cannot be set to a result derived from an ephemeral value.",
+					Subject: &hcl.Range{
+						Filename: filepath.Join(m.Module.SourceDir, "child", "main.tf"),
+						Start:    hcl.Pos{Line: 14, Column: 13, Byte: 245},
+						End:      hcl.Pos{Line: 14, Column: 78, Byte: 310},
+					},
 				})
 			},
 		},
@@ -377,17 +423,32 @@ check "check_using_ephemeral_value" {
 					Severity: hcl.DiagWarning,
 					Summary:  "Check block assertion failed",
 					Detail:   "Fine to persist",
+					Subject: &hcl.Range{
+						Filename: filepath.Join(m.Module.SourceDir, "main.tf"),
+						Start:    hcl.Pos{Line: 6, Column: 17, Byte: 104},
+						End:      hcl.Pos{Line: 6, Column: 60, Byte: 147},
+					},
 				})
 				diags = diags.Append(&hcl.Diagnostic{
 					Severity: hcl.DiagWarning,
 					Summary:  "Check block assertion failed",
 					Detail:   "This check failed, but has an invalid error message as described in the other accompanying messages.",
+					Subject: &hcl.Range{
+						Filename: filepath.Join(m.Module.SourceDir, "main.tf"),
+						Start:    hcl.Pos{Line: 10, Column: 17, Byte: 217},
+						End:      hcl.Pos{Line: 10, Column: 60, Byte: 260},
+					},
 				})
 				diags = diags.Append(&hcl.Diagnostic{
 					Severity: hcl.DiagWarning,
 					Summary:  "Error message refers to ephemeral values",
 					Detail: "The error expression used to explain this condition refers to ephemeral values, so Terraform will not display the resulting message." +
 						"\n\nYou can correct this by removing references to ephemeral values, or by using the ephemeralasnull() function on the references to not reveal ephemeral data.",
+					Subject: &hcl.Range{
+						Filename: filepath.Join(m.Module.SourceDir, "main.tf"),
+						Start:    hcl.Pos{Line: 11, Column: 21, Byte: 281},
+						End:      hcl.Pos{Line: 11, Column: 83, Byte: 343},
+					},
 				})
 				return diags
 			},
@@ -450,14 +511,29 @@ module "child" {
 					Severity: hcl.DiagError,
 					Summary:  "Ephemeral value not allowed",
 					Detail:   "This output value is not declared as returning an ephemeral value, so it cannot be set to a result derived from an ephemeral value.",
+					Subject: &hcl.Range{
+						Filename: filepath.Join(m.Module.SourceDir, "child", "main.tf"),
+						Start:    hcl.Pos{Line: 15, Column: 13, Byte: 376},
+						End:      hcl.Pos{Line: 15, Column: 33, Byte: 396},
+					},
 				}, &hcl.Diagnostic{
 					Severity: hcl.DiagError,
 					Summary:  "Ephemeral value not allowed",
 					Detail:   "This output value is not declared as returning an ephemeral value, so it cannot be set to a result derived from an ephemeral value.",
+					Subject: &hcl.Range{
+						Filename: filepath.Join(m.Module.SourceDir, "child", "main.tf"),
+						Start:    hcl.Pos{Line: 18, Column: 13, Byte: 435},
+						End:      hcl.Pos{Line: 18, Column: 31, Byte: 453},
+					},
 				}, &hcl.Diagnostic{
 					Severity: hcl.DiagError,
 					Summary:  "Ephemeral value not allowed",
 					Detail:   "This output value is not declared as returning an ephemeral value, so it cannot be set to a result derived from an ephemeral value.",
+					Subject: &hcl.Range{
+						Filename: filepath.Join(m.Module.SourceDir, "child", "main.tf"),
+						Start:    hcl.Pos{Line: 21, Column: 13, Byte: 491},
+						End:      hcl.Pos{Line: 21, Column: 30, Byte: 508},
+					},
 				})
 			},
 		},
@@ -482,6 +558,11 @@ ephemeral "ephem_resource" "data" {
 					Severity: hcl.DiagError,
 					Summary:  "Resource precondition failed",
 					Detail:   "value should not be 2",
+					Subject: &hcl.Range{
+						Filename: filepath.Join(m.Module.SourceDir, "main.tf"),
+						Start:    hcl.Pos{Line: 8, Column: 19, Byte: 116},
+						End:      hcl.Pos{Line: 8, Column: 40, Byte: 137},
+					},
 				})
 			},
 		},
@@ -506,6 +587,11 @@ ephemeral "ephem_resource" "data" {
 					Severity: hcl.DiagError,
 					Summary:  "Resource postcondition failed",
 					Detail:   `value should be "pass"`,
+					Subject: &hcl.Range{
+						Filename: filepath.Join(m.Module.SourceDir, "main.tf"),
+						Start:    hcl.Pos{Line: 8, Column: 19, Byte: 117},
+						End:      hcl.Pos{Line: 8, Column: 39, Byte: 137},
+					},
 				})
 			},
 		},
@@ -516,13 +602,13 @@ ephemeral "ephem_resource" "data" {
 variable "ephem" {
   type        = string
   ephemeral   = true
-  
+
   validation {
     condition     = length(var.ephem) > 4
     error_message = "This should fail but not show the value: ${var.ephem}"
   }
 }
-  
+
 output "out" {
   value = ephemeralasnull(var.ephem)
 }
@@ -540,12 +626,96 @@ output "out" {
 					Detail: fmt.Sprintf(`The error message included a sensitive value, so it will not be displayed.
 
 This was checked by the validation rule at %s.`, m.Module.Variables["ephem"].Validations[0].DeclRange.String()),
+					Subject: &hcl.Range{
+						Filename: filepath.Join(m.Module.SourceDir, "main.tf"),
+						Start:    hcl.Pos{Line: 2, Column: 1, Byte: 1},
+						End:      hcl.Pos{Line: 2, Column: 17, Byte: 17},
+					},
 				}).Append(&hcl.Diagnostic{
 					Severity: hcl.DiagError,
 					Summary:  "Error message refers to ephemeral values",
 					Detail: `The error expression used to explain this condition refers to ephemeral values. Terraform will not display the resulting message.
 
 You can correct this by removing references to ephemeral values, or by carefully using the ephemeralasnull() function if the expression will not reveal the ephemeral data.`,
+					Subject: &hcl.Range{
+						Filename: filepath.Join(m.Module.SourceDir, "main.tf"),
+						Start:    hcl.Pos{Line: 8, Column: 21, Byte: 142},
+						End:      hcl.Pos{Line: 8, Column: 76, Byte: 197},
+					},
+				})
+			},
+		},
+
+		"write_only attribute": {
+			module: map[string]string{
+				"main.tf": `
+ephemeral "ephem_resource" "data" {
+}
+resource "ephem_write_only" "test" {
+    write_only = ephemeral.ephem_resource.data.value
+}
+`,
+			},
+			expectOpenEphemeralResourceCalled:           true,
+			expectValidateEphemeralResourceConfigCalled: true,
+			expectCloseEphemeralResourceCalled:          true,
+		},
+		"write_only_sensitive_and_ephem": {
+			module: map[string]string{
+				"main.tf": `
+variable "in" {
+  sensitive = true
+  ephemeral = true
+}
+resource "ephem_write_only" "test" {
+    write_only = var.in
+}
+`,
+			},
+			inputs: InputValues{
+				"in": &InputValue{
+					Value: cty.StringVal("test"),
+				},
+			},
+		},
+
+		"ad-hoc-ephemeral-output": {
+			module: map[string]string{
+				"child/main.tf": `
+output "value" {
+    value = {
+        applying = terraform.applying
+        static = "test"
+    }
+
+	// It's valid to assign any partially ephemeral value, the output will always be
+	// entirely ephemeral.
+    ephemeral = true
+}
+`,
+				"main.tf": `
+module "child" {
+    source = "./child"
+}
+
+output "root" {
+    // We expect a diagnostic here indicating that this value is ephemeral. This
+    // ensures that the module output was valid and the ephemeral marks were
+    // correctly re-applied during evaluation.
+    value = module.child.value
+}
+`,
+			},
+			expectPlanDiagnostics: func(m *configs.Config) (diags tfdiags.Diagnostics) {
+				return diags.Append(&hcl.Diagnostic{
+					Severity: hcl.DiagError,
+					Summary:  "Ephemeral value not allowed",
+					Detail:   "This output value is not declared as returning an ephemeral value, so it cannot be set to a result derived from an ephemeral value.",
+					Subject: &hcl.Range{
+						Filename: filepath.Join(m.Module.SourceDir, "main.tf"),
+						Start:    hcl.Pos{Line: 10, Column: 13, Byte: 277},
+						End:      hcl.Pos{Line: 10, Column: 31, Byte: 295},
+					},
 				})
 			},
 		},
@@ -557,7 +727,7 @@ You can correct this by removing references to ephemeral values, or by carefully
 				GetProviderSchemaResponse: &providers.GetProviderSchemaResponse{
 					EphemeralResourceTypes: map[string]providers.Schema{
 						"ephem_resource": {
-							Block: &configschema.Block{
+							Body: &configschema.Block{
 								Attributes: map[string]*configschema.Attribute{
 									"value": {
 										Type:     cty.String,
@@ -577,6 +747,19 @@ You can correct this by removing references to ephemeral values, or by carefully
 									"bool": {
 										Type:     cty.Bool,
 										Computed: true,
+									},
+								},
+							},
+						},
+					},
+					ResourceTypes: map[string]providers.Schema{
+						"ephem_write_only": {
+							Body: &configschema.Block{
+								Attributes: map[string]*configschema.Attribute{
+									"write_only": {
+										Type:      cty.String,
+										WriteOnly: true,
+										Optional:  true,
 									},
 								},
 							},
@@ -643,12 +826,12 @@ You can correct this by removing references to ephemeral values, or by carefully
 
 			diags := ctx.Validate(m, &ValidateOpts{})
 			if tc.expectValidateDiagnostics != nil {
-				assertDiagnosticsSummaryAndDetailMatch(t, diags, tc.expectValidateDiagnostics(m))
+				tfdiags.AssertDiagnosticsMatch(t, diags, tc.expectValidateDiagnostics(m))
 				// If we expect diagnostics, we should not continue with the plan
 				// as it will fail.
 				return
 			} else {
-				assertNoDiagnostics(t, diags)
+				tfdiags.AssertNoDiagnostics(t, diags)
 			}
 
 			if tc.expectValidateEphemeralResourceConfigCalled {
@@ -664,9 +847,9 @@ You can correct this by removing references to ephemeral values, or by carefully
 
 			plan, diags := ctx.Plan(m, nil, SimplePlanOpts(plans.NormalMode, inputs))
 			if tc.expectPlanDiagnostics != nil {
-				assertDiagnosticsSummaryAndDetailMatch(t, diags, tc.expectPlanDiagnostics(m))
+				tfdiags.AssertDiagnosticsMatch(t, diags, tc.expectPlanDiagnostics(m))
 			} else {
-				assertNoDiagnostics(t, diags)
+				tfdiags.AssertNoDiagnostics(t, diags)
 			}
 
 			if tc.assertPlan != nil {
@@ -723,7 +906,7 @@ resource "sink_object" "empty" {
 		GetProviderSchemaResponse: &providers.GetProviderSchemaResponse{
 			EphemeralResourceTypes: map[string]providers.Schema{
 				"ephem_resource": {
-					Block: &configschema.Block{
+					Body: &configschema.Block{
 						Attributes: map[string]*configschema.Attribute{
 							"value": {
 								Type:     cty.String,
@@ -742,7 +925,7 @@ resource "sink_object" "empty" {
 
 	sink := simpleMockProvider()
 	sink.GetProviderSchemaResponse.ResourceTypes = map[string]providers.Schema{
-		"sink_object": {Block: simpleTestSchema()},
+		"sink_object": {Body: simpleTestSchema()},
 	}
 	sink.ConfigureProviderFn = func(req providers.ConfigureProviderRequest) (resp providers.ConfigureProviderResponse) {
 		if req.Config.GetAttr("test_string").IsKnown() {
@@ -762,7 +945,7 @@ resource "sink_object" "empty" {
 	})
 
 	_, diags := ctx.Plan(m, nil, DefaultPlanOpts)
-	assertNoDiagnostics(t, diags)
+	tfdiags.AssertNoDiagnostics(t, diags)
 
 	if ephem.OpenEphemeralResourceCalled {
 		t.Error("OpenEphemeralResourceCalled called when config was not known")

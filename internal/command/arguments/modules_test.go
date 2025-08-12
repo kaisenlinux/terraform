@@ -4,10 +4,8 @@
 package arguments
 
 import (
-	"reflect"
 	"testing"
 
-	"github.com/davecgh/go-spew/spew"
 	"github.com/hashicorp/terraform/internal/tfdiags"
 )
 
@@ -83,9 +81,7 @@ func TestParseModules_invalid(t *testing.T) {
 			if *got != *tc.want {
 				t.Fatalf("unexpected result\n got: %#v\nwant: %#v", got, tc.want)
 			}
-			if !reflect.DeepEqual(gotDiags, tc.wantDiags) {
-				t.Fatalf("wrong result\ngot: %s\nwant: %s", spew.Sdump(gotDiags), spew.Sdump(tc.wantDiags))
-			}
+			tfdiags.AssertDiagnosticsMatch(t, gotDiags, tc.wantDiags)
 		})
 	}
 }

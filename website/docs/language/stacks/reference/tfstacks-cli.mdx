@@ -9,7 +9,7 @@ The `terraform-stacks-cli` is a command-line tool for validating, initializing, 
 
 ## Requirements
 
-The `terraform-stacks-cli` requires an `alpha` version of Terraform, and you must use at least `terraform_1.10.0-alpha20241009` or higher. You can download an `alpha` version of Terraform on the [releases page](https://releases.hashicorp.com/terraform/).
+The `terraform-stacks-cli` requires an `alpha` version of Terraform, and you must use at least version `terraform_1.10.0-alpha20241009` or higher. You can download an `alpha` version of Terraform on the [releases page](https://releases.hashicorp.com/terraform/). We recommend downloading the latest alpha version of Terraform to use the most up-to-date functionality.
 
 ## Installation
 
@@ -54,7 +54,7 @@ Run the following commands to install the `terraform-stacks-cli` using Fedora.
 
 ```shell-session
 $ sudo dnf install -y dnf-plugins-core
-$ sudo dnf config-manager --add-repo https://rpm.releases.hashicorp.com/fedora/hashicorp.repo
+$ sudo dnf config-manager addrepo --from-repofile=https://rpm.releases.hashicorp.com/fedora/hashicorp.repo
 $ sudo dnf -y install terraform-stacks-cli
 ```
 
